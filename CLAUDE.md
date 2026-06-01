@@ -93,6 +93,15 @@ gradle build --no-daemon  # wrapper JAR 없을 때
 | `feature/{task-id}-{desc}` | 기능 개발 (예: `feature/t3-6-booking-seat`) |
 | `test/{experiment}` | 실험/PoC 비교 (예: `test/e1-lock-comparison`) |
 
+## 개발 워크플로우
+
+> 상세 내용: `docs/Dev_Workflow.md`
+
+작업 순서: **Task 추출 → 실행 계획 작성 → 사람 검토·승인 → 소단위 구현 반복(코드→테스트→커밋 승인→커밋) → Phase 결과 보고서 → 체크리스트 완료 처리**
+
+- 계획 승인 없이 구현 시작 금지
+- 커밋 단위·테스트 유효성 규칙은 아래 각 섹션 참조
+
 ## 테스트 규칙
 
 - **계획 단계에서 유효성 검토**: 테스트 코드를 작성하기 전, 해당 테스트가 실제로 의미 있는 비즈니스 로직이나 설계 결정을 검증하는지 먼저 확인한다. Java 언어 동작(필드 초기화, getter 등), 프레임워크 동작(H2 vs 실제 DB 불일치), 단순 위임 코드는 테스트 대상이 아니다.
