@@ -1,8 +1,5 @@
 package com.ktx.ticketing.booking;
 
-import com.ktx.ticketing.domain.ReservationRepository;
-import com.ktx.ticketing.domain.SeatInventoryRepository;
-import com.ktx.ticketing.domain.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RLock;
@@ -26,12 +23,7 @@ class LockBookingServiceTest {
         lock = mock(RLock.class);
         when(redisson.getLock(anyString())).thenReturn(lock);
 
-        service = new LockBookingService(
-                redisson,
-                mock(SeatInventoryRepository.class),
-                mock(ReservationRepository.class),
-                mock(UserRepository.class)
-        );
+        service = new LockBookingService(redisson, mock(BookingTransactionHelper.class));
     }
 
     @Test

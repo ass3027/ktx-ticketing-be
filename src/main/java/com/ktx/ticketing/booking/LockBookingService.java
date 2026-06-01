@@ -1,19 +1,16 @@
 package com.ktx.ticketing.booking;
 
-import com.ktx.ticketing.domain.*;
+import com.ktx.ticketing.domain.Reservation;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
-import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
  * E1 비교용: Redisson 분산락으로 동시성을 제어하는 예매 서비스.
- * Redis 선점(SREM/SPOP) 없이 락 획득 → DB 조회 → 상태전이 순서로 진행.
- * BookingService(Redis 선점 + 낙관락)와 성능/정합성 비교 실험(E1)에 사용.
+ * Redis 선점(SREM/SPOP) 없이 락 획득 → 트랜잭션(BookingTransactionHelper) 순으로 진행.
+ * 락이 트랜잭션을 감싸는 구조 — 커밋 후 락 해제 보장.
  */
 @Service
 public class LockBookingService {
@@ -23,18 +20,11 @@ public class LockBookingService {
     static final long LEASE_SECONDS = 10;
 
     private final RedissonClient redisson;
-    private final SeatInventoryRepository seatInventoryRepository;
-    private final ReservationRepository reservationRepository;
-    private final UserRepository userRepository;
+    private final BookingTransactionHelper txHelper;
 
-    public LockBookingService(RedissonClient redisson,
-                               SeatInventoryRepository seatInventoryRepository,
-                               ReservationRepository reservationRepository,
-                               UserRepository userRepository) {
+    public LockBookingService(RedissonClient redisson, BookingTransactionHelper txHelper) {
         this.redisson = redisson;
-        this.seatInventoryRepository = seatInventoryRepository;
-        this.reservationRepository = reservationRepository;
-        this.userRepository = userRepository;
+        this.txHelper = txHelper;
     }
 
     /**
@@ -47,7 +37,7 @@ public class LockBookingService {
             if (!lock.tryLock(WAIT_SECONDS, LEASE_SECONDS, TimeUnit.SECONDS)) {
                 return null;
             }
-            return doBookSeat(userId, seatInventoryId);
+            return txHelper.holdSeat(userId, seatInventoryId);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return null;
@@ -68,7 +58,7 @@ public class LockBookingService {
             if (!lock.tryLock(WAIT_SECONDS, LEASE_SECONDS, TimeUnit.SECONDS)) {
                 return null;
             }
-            return doBookAuto(userId, scheduleId);
+            return txHelper.holdAnySeat(userId, scheduleId);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return null;
@@ -77,36 +67,5 @@ public class LockBookingService {
                 lock.unlock();
             }
         }
-    }
-
-    @Transactional
-    protected Reservation doBookSeat(Long userId, Long seatInventoryId) {
-        SeatInventory inventory = seatInventoryRepository.findById(seatInventoryId)
-                .orElseThrow(() -> new IllegalStateException("SeatInventory not found: " + seatInventoryId));
-
-        if (inventory.getStatus() != SeatStatus.AVAILABLE) {
-            return null;
-        }
-
-        User user = userRepository.getReferenceById(userId);
-        inventory.hold(LocalDateTime.now().plusMinutes(BookingService.HELD_TTL_MINUTES));
-        Reservation reservation = Reservation.hold(user, inventory, BookingService.HELD_TTL_MINUTES);
-        reservationRepository.save(reservation);
-        return reservation;
-    }
-
-    @Transactional
-    protected Reservation doBookAuto(Long userId, Long scheduleId) {
-        List<SeatInventory> available = seatInventoryRepository.findAvailableByScheduleId(scheduleId);
-        if (available.isEmpty()) {
-            return null;
-        }
-
-        User user = userRepository.getReferenceById(userId);
-        SeatInventory inventory = available.get(0);
-        inventory.hold(LocalDateTime.now().plusMinutes(BookingService.HELD_TTL_MINUTES));
-        Reservation reservation = Reservation.hold(user, inventory, BookingService.HELD_TTL_MINUTES);
-        reservationRepository.save(reservation);
-        return reservation;
     }
 }
