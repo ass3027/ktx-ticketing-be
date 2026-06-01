@@ -10,7 +10,7 @@
 | 페이즈 | 태스크 수 | 완료 | 진행률 | 마일스톤 |
 |--------|-----------|------|--------|----------|
 | P0 셋업 | 4 | 4 | 100% | — |
-| P1 설계 확정 | 6 | 0 | 0% | M1 |
+| P1 설계 확정 | 6 | 6 | 100% | M1 ✅ |
 | P2 핵심 PoC | 5 | 0 | 0% | M2 |
 | P3 기능 구현 | 11 | 0 | 0% | M3 |
 | P4 성능 측정 | 9 | 0 | 0% | M4 |
@@ -28,13 +28,13 @@
 - **DoD**: `docker compose up`으로 빈 앱+DB+Redis 기동
 
 ## P1. 설계 확정 → 🏁 M1
-- [ ] **T1-1** 미정값 결정: HELD TTL(예 5분)
-- [ ] **T1-2** 미정값 결정: 결제 2단계(HELD→SOLD) vs 즉시 SOLD
-- [ ] **T1-3** 미정값 결정: MQ 도입 범위(사이드만 / E4까지 / 미도입)
-- [ ] **T1-4** ERD 확정 + DDL 작성
-- [ ] **T1-5** Redis 키 설계: `avail:{sched}`(Set)·잔여 카운터·활성자 카운터·EntryToken
-- [ ] **T1-6** seed 스크립트(50편×1,000석, user 1만)
-- **DoD(M1)**: ERD/DDL/Redis키/seed 확정 = 설계 동결
+- [x] **T1-1** 미정값 결정: HELD TTL → **5분(300초)**
+- [x] **T1-2** 미정값 결정: 결제 단계 → **HELD→SOLD 2단계 유지**
+- [x] **T1-3** 미정값 결정: MQ 도입 범위 → **async side only (P5 Could)**
+- [x] **T1-4** ERD 확정 + JPA 엔티티 작성 (6개 클래스) → `docs/P1_Design.md`
+- [x] **T1-5** Redis 키 설계: `avail`·`remain`·`active`·`entry` → `docs/P1_Design.md`
+- [x] **T1-6** seed DataInitializer → seat_inventory 50,000건 / user 10,000건 (1.1초)
+- **DoD(M1)**: ERD/DDL/Redis키/seed 확정 = 설계 동결 ✅
 
 ## P2. 핵심 PoC (리스크 First) → 🏁 M2
 - [ ] **T2-1** 직접 선택 선점 PoC: `SREM avail {seat}`

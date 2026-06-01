@@ -92,3 +92,8 @@ gradle build --no-daemon  # wrapper JAR 없을 때
 | `develop` | 기능 통합 브랜치. feature/* → develop → main |
 | `feature/{task-id}-{desc}` | 기능 개발 (예: `feature/t3-6-booking-seat`) |
 | `test/{experiment}` | 실험/PoC 비교 (예: `test/e1-lock-comparison`) |
+
+## 테스트 규칙
+
+- **계획 단계에서 유효성 검토**: 테스트 코드를 작성하기 전, 해당 테스트가 실제로 의미 있는 비즈니스 로직이나 설계 결정을 검증하는지 먼저 확인한다. Java 언어 동작(필드 초기화, getter 등), 프레임워크 동작(H2 vs 실제 DB 불일치), 단순 위임 코드는 테스트 대상이 아니다.
+- **각 task를 검증하는 테스트 추가**: 각 페이즈(P0~P6)의 태스크가 완료될 때 해당 태스크의 핵심 결정이나 로직을 검증하는 테스트를 함께 작성한다. 테스트가 불가능하거나 의미 없는 태스크(설계 문서, Redis 키 설계 등)는 명시적으로 사유를 남긴다.

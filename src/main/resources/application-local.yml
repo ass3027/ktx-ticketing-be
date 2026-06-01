@@ -1,7 +1,12 @@
-# 로컬 개발 전용 프로파일 — docker-compose로 DB/Redis 기동 후 사용
-# 실행: java -jar app.jar --spring.profiles.active=local
+# 로컬 개발 전용 프로파일 — docker compose up mysql redis 후 IDE에서 실행
 spring:
   jpa:
     hibernate:
       ddl-auto: update
     show-sql: true
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 1000
+        order_inserts: true
+        order_updates: true
