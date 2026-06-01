@@ -47,6 +47,48 @@ These are settled in the design docs. Honor them when implementing — don't sil
 - Every design choice and SLO value needs a written rationale (trade-off) — that rationale is the graded deliverable, captured in the README.
 - Experiments **E1** (lock on/off → oversell vanishes), **E2** (admission control on/off), **E3** (query cache on/off) are required Before/After deliverables; E4 (sync vs async) is optional.
 
-## Stack (not yet finalized)
+## Stack (확정 — 2026-06-01)
 
-**Redis is confirmed.** Proposed but undecided: Spring Boot + MySQL, local Docker Compose (app + DB + Redis), k6 (preferred) or nGrinder for load tests. Confirm the stack before scaffolding (this is part of phase P0/M1). Once a build tool exists, document its build/test/run commands here.
+| 항목 | 결정 |
+|------|------|
+| 앱 프레임워크 | Spring Boot 3.3 (Java 17) |
+| 빌드툴 | Gradle 8.8 (Kotlin DSL) |
+| DB | MySQL 8.0 |
+| Cache / 선점 | Redis 7 |
+| 분산락 | Redisson 3.32 |
+| 로드테스트 | k6 (우선), nGrinder (대안) |
+| CI | GitHub Actions |
+
+### 빌드 / 실행 명령어
+
+```bash
+# 로컬 전체 기동 (앱 + MySQL + Redis)
+docker compose up --build
+
+# 로컬 개발 (DB/Redis만 Docker, 앱은 IDE에서 실행)
+docker compose up mysql redis
+# → IDE에서 --spring.profiles.active=local 로 KtxTicketingApplication 실행
+
+# 빌드 (Gradle wrapper 없을 경우 gradle 직접 사용)
+./gradlew build          # wrapper 초기화 후
+gradle build --no-daemon  # wrapper JAR 없을 때
+
+# 테스트
+./gradlew test
+
+# 실행 가능한 JAR 생성
+./gradlew bootJar
+```
+
+> **Gradle wrapper 초기화**: `gradle-wrapper.jar` 는 바이너리라 별도 초기화 필요.
+> 로컬에 Gradle 설치 후 `gradle wrapper --gradle-version 8.8` 실행 → JAR 생성 → 커밋.
+> CI는 `gradle/actions/setup-gradle@v3` 로 wrapper 없이도 동작.
+
+### 브랜치 전략
+
+| 브랜치 | 용도 |
+|--------|------|
+| `main` | 항상 배포 가능한 상태. PR + CI 통과 필수 |
+| `develop` | 기능 통합 브랜치. feature/* → develop → main |
+| `feature/{task-id}-{desc}` | 기능 개발 (예: `feature/t3-6-booking-seat`) |
+| `test/{experiment}` | 실험/PoC 비교 (예: `test/e1-lock-comparison`) |

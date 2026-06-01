@@ -1,0 +1,7 @@
+# 로컬 개발 전용 프로파일 — docker-compose로 DB/Redis 기동 후 사용
+# 실행: java -jar app.jar --spring.profiles.active=local
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
