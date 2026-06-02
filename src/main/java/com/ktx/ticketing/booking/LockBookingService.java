@@ -1,6 +1,7 @@
 package com.ktx.ticketing.booking;
 
 import com.ktx.ticketing.domain.Reservation;
+import lombok.RequiredArgsConstructor;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.stereotype.Service;
@@ -13,6 +14,7 @@ import java.util.concurrent.TimeUnit;
  * 락이 트랜잭션을 감싸는 구조 — 커밋 후 락 해제 보장.
  */
 @Service
+@RequiredArgsConstructor
 public class LockBookingService {
 
     static final String LOCK_PREFIX = "lock:schedule:";
@@ -21,11 +23,6 @@ public class LockBookingService {
 
     private final RedissonClient redisson;
     private final BookingTransactionHelper txHelper;
-
-    public LockBookingService(RedissonClient redisson, BookingTransactionHelper txHelper) {
-        this.redisson = redisson;
-        this.txHelper = txHelper;
-    }
 
     /**
      * SEAT 모드: 분산락 획득 후 지정 좌석 HELD 전이.

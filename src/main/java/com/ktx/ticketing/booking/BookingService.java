@@ -1,6 +1,7 @@
 package com.ktx.ticketing.booking;
 
 import com.ktx.ticketing.domain.*;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -11,6 +12,7 @@ import java.time.LocalDateTime;
  * 낙관적 락(@Version)이 최종 방어선 — 선점 경쟁에서 이겼어도 동시 DB 쓰기 충돌 시 예외 발생.
  */
 @Service
+@RequiredArgsConstructor
 public class BookingService {
 
     static final int HELD_TTL_MINUTES = 5;
@@ -19,16 +21,6 @@ public class BookingService {
     private final SeatInventoryRepository seatInventoryRepository;
     private final ReservationRepository reservationRepository;
     private final UserRepository userRepository;
-
-    public BookingService(SeatPreemptionService preemption,
-                          SeatInventoryRepository seatInventoryRepository,
-                          ReservationRepository reservationRepository,
-                          UserRepository userRepository) {
-        this.preemption = preemption;
-        this.seatInventoryRepository = seatInventoryRepository;
-        this.reservationRepository = reservationRepository;
-        this.userRepository = userRepository;
-    }
 
     /**
      * SEAT 모드: 특정 좌석 직접 선택 예매.

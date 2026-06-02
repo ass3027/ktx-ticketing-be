@@ -1,5 +1,6 @@
 package com.ktx.ticketing.booking;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -10,15 +11,12 @@ import org.springframework.stereotype.Service;
  * 취소/만료 시 SADD로 반환.
  */
 @Service
+@RequiredArgsConstructor
 public class SeatPreemptionService {
 
     static final String KEY_PREFIX = "avail:";
 
     private final StringRedisTemplate redis;
-
-    public SeatPreemptionService(StringRedisTemplate redis) {
-        this.redis = redis;
-    }
 
     /** SEAT 모드: 지정 seatInventoryId 선점 시도. true = 승자 */
     public boolean tryPreemptSeat(Long scheduleId, Long seatInventoryId) {

@@ -1,6 +1,7 @@
 package com.ktx.ticketing.booking;
 
 import com.ktx.ticketing.domain.*;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -12,19 +13,12 @@ import java.util.List;
  * 락(LockBookingService) → 트랜잭션(이 클래스) 순서를 보장.
  */
 @Service
+@RequiredArgsConstructor
 public class BookingTransactionHelper {
 
     private final SeatInventoryRepository seatInventoryRepository;
     private final ReservationRepository reservationRepository;
     private final UserRepository userRepository;
-
-    public BookingTransactionHelper(SeatInventoryRepository seatInventoryRepository,
-                                    ReservationRepository reservationRepository,
-                                    UserRepository userRepository) {
-        this.seatInventoryRepository = seatInventoryRepository;
-        this.reservationRepository = reservationRepository;
-        this.userRepository = userRepository;
-    }
 
     @Transactional
     public Reservation holdSeat(Long userId, Long seatInventoryId) {
