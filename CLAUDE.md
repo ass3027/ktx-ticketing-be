@@ -51,11 +51,11 @@ These are settled in the design docs. Honor them when implementing — don't sil
 
 | 항목 | 결정 |
 |------|------|
-| 앱 프레임워크 | Spring Boot 3.3 (Java 17) |
-| 빌드툴 | Gradle 8.8 (Kotlin DSL) |
+| 앱 프레임워크 | Spring Boot 4.0 (Java 25) |
+| 빌드툴 | Gradle 9.5 (Kotlin DSL) |
 | DB | MySQL 8.0 |
 | Cache / 선점 | Redis 7 |
-| 분산락 | Redisson 3.32 |
+| 분산락 | Redisson 4.4 |
 | 로드테스트 | k6 (우선), nGrinder (대안) |
 | CI | GitHub Actions |
 
@@ -81,8 +81,11 @@ gradle build --no-daemon  # wrapper JAR 없을 때
 ```
 
 > **Gradle wrapper 초기화**: `gradle-wrapper.jar` 는 바이너리라 별도 초기화 필요.
-> 로컬에 Gradle 설치 후 `gradle wrapper --gradle-version 8.8` 실행 → JAR 생성 → 커밋.
+> 로컬에 Gradle 설치 후 `gradle wrapper --gradle-version 9.5.1` 실행 → JAR 생성 → 커밋.
 > CI는 `gradle/actions/setup-gradle@v3` 로 wrapper 없이도 동작.
+>
+> **JDK 25 toolchain**: 로컬에 JDK 25가 없어도 `settings.gradle.kts` 의 foojay-resolver 플러그인이
+> toolchain JDK를 자동 다운로드한다. (Gradle 자체는 JDK 17~26에서 구동 가능, JDK 25 빌드는 Gradle 9.1.0+ 필수)
 
 ### 브랜치 전략
 
