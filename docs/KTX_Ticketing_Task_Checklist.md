@@ -52,6 +52,7 @@
 - [ ] **T3-4** 초과 시 429/503 + Retry-After
 - [ ] **T3-5** EntryToken 발급/만료/검증
 ### ② 예매/결제
+- [ ] **T3-5b** (설계 재검토) 예매 결과 반환 타입 결정: 현행 `null` 반환을 sealed `BookingResult`(record: Success/SeatTaken/SoldOut/Overloaded) + exhaustive switch 로 교체할지 결정. 컨트롤러에서 사유별 HTTP 매핑(409/410/503 Retry-After) 필요성·예외 비용(경쟁 패배가 다수 케이스 → 예외 부적합) 근거로 판단. 채택 시 booking 패키지의 `@Nullable` 반환 표기 제거. 미채택 시 null + `@Nullable` 유지 사유 기록.
 - [ ] **T3-6** 예매 API `mode=SEAT` (P2 선점 통합)
 - [ ] **T3-7** 예매 API `mode=AUTO`
 - [ ] **T3-8** 결제 확정(HELD→SOLD) + 취소 + 카운터/활성자 동기화
@@ -70,6 +71,7 @@
 - [ ] **T4-7** L5 임계점 탐색 → **활성자 상한 K 역산·확정**
 - [ ] **T4-8** L6 지속 부하(soak)
 - [ ] **T4-9** 실험 E1(선점/락)·E2(입장 제어)·E3(조회 캐시) Before/After + 그래프
+- [ ] **T4-10** 실험 E5: 가상 스레드(Virtual Thread) on/off 성능 비교 — `spring.threads.virtual.enabled` 토글, 동일 부하(L2)에서 처리량·p95/p99·스레드 점유 Before/After + 그래프. 락 대기(Redisson)·DB I/O 블로킹 구간이 캐리어 스레드를 점유하지 않음을 검증. (JDK 21+ / Spring Boot 4.0, JDK 24 JEP 491로 synchronized 핀닝 해소)
 - **DoD(M4)**: SLO 충족/미달 사유 + Before/After 그래프 + 임계점 수치
 
 ## P5. 비동기 사이드 (Could)
