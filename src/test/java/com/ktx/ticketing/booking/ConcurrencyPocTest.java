@@ -39,7 +39,7 @@ class ConcurrencyPocTest {
 
     @Autowired BookingService bookingService;
     @Autowired LockBookingService lockBookingService;
-    @Autowired SeatPreemptionService preemptionService;
+    @Autowired SeatPreemption preemptionService;
     @Autowired SeatInventoryRepository seatInventoryRepository;
     @Autowired ReservationRepository reservationRepository;
     @Autowired StringRedisTemplate redis;
@@ -53,7 +53,7 @@ class ConcurrencyPocTest {
         seatInventoryRepository.save(inv);
 
         // Redis: avail Set에 대상 좌석 1개만 세팅
-        preemptionService.initAvailSet(SCHEDULE_ID, List.of(SEAT_INVENTORY_ID));
+        preemptionService.initInventory(SCHEDULE_ID, List.of(SEAT_INVENTORY_ID));
 
         // 기존 예약 삭제
         reservationRepository.deleteAll(

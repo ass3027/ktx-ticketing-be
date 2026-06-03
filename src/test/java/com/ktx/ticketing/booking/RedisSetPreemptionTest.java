@@ -15,11 +15,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-class SeatPreemptionServiceTest {
+class RedisSetPreemptionTest {
 
     @Mock private StringRedisTemplate redis;
     @Mock private SetOperations<String, String> setOps;
-    @InjectMocks private SeatPreemptionService service;
+    @InjectMocks private RedisSetPreemption service;
 
     @BeforeEach
     void setUp() {
@@ -81,8 +81,8 @@ class SeatPreemptionServiceTest {
     }
 
     @Test
-    void initAvailSet_기존_Set을_먼저_비우고_전체_좌석을_적재() {
-        service.initAvailSet(1L, List.of(10L, 20L));
+    void initInventory_기존_Set을_먼저_비우고_전체_좌석을_적재() {
+        service.initInventory(1L, List.of(10L, 20L));
 
         // delete가 add보다 먼저여야 재초기화 시 좌석 중복 적재를 막는다 → 순서가 계약
         var inOrder = inOrder(redis, setOps);

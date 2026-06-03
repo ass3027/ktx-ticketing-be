@@ -9,7 +9,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 
 /**
- * Redis 선점(SeatPreemptionService) 후 DB 상태전이를 수행한다.
+ * 선점(SeatPreemption, 기본 Redis Set) 후 DB 상태전이를 수행한다.
  * 낙관적 락(@Version)이 최종 방어선 — 선점 경쟁에서 이겼어도 동시 DB 쓰기 충돌 시 예외 발생.
  */
 @Service
@@ -17,13 +17,13 @@ public class BookingService {
 
     static final int HELD_TTL_MINUTES = 5;
 
-    private final SeatPreemptionService preemption;
+    private final SeatPreemption preemption;
     private final SeatInventoryRepository seatInventoryRepository;
     private final ReservationRepository reservationRepository;
     private final UserRepository userRepository;
     private final Clock clock;
 
-    public BookingService(SeatPreemptionService preemption,
+    public BookingService(SeatPreemption preemption,
                           SeatInventoryRepository seatInventoryRepository,
                           ReservationRepository reservationRepository,
                           UserRepository userRepository,

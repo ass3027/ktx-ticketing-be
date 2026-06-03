@@ -29,7 +29,7 @@ class BookingServiceTest {
     private static final long SCHEDULE_ID = 1L;
     private static final long SEAT_INVENTORY_ID = 42L;
 
-    @Mock SeatPreemptionService preemption;
+    @Mock SeatPreemption preemption;
     @Mock SeatInventoryRepository seatInventoryRepository;
     @Mock ReservationRepository reservationRepository;
     @Mock UserRepository userRepository;
