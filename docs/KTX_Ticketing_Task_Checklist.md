@@ -12,11 +12,11 @@
 | P0 셋업 | 4 | 4 | 100% | — |
 | P1 설계 확정 | 6 | 6 | 100% | M1 ✅ |
 | P2 핵심 PoC | 5 | 5 | 100% | M2 ✅ |
-| P3 기능 구현 | 11 | 0 | 0% | M3 |
-| P4 성능 측정 | 9 | 0 | 0% | M4 |
+| P3 기능 구현 | 13 | 0 | 0% | M3 |
+| P4 성능 측정 | 11 | 0 | 0% | M4 |
 | P5 비동기 | 3 | 0 | 0% | — |
 | P6 산출물 | 7 | 0 | 0% | M5 |
-| **합계** | **45** | **0** | **0%** | |
+| **합계** | **49** | **15** | **31%** | |
 
 ---
 
@@ -57,6 +57,7 @@
 - [ ] **T3-7** 예매 API `mode=AUTO`
 - [ ] **T3-8** 결제 확정(HELD→SOLD) + 취소 + 카운터/활성자 동기화
 - [ ] **T3-9** HELD TTL 만료 스케줄러 → 좌석/카운터/`avail` 복구
+- [ ] **T3-9b** (follow-up) 시간 소스 단일화: `Clock` 빈을 `BookingTransactionHelper`(락 경로, `now()` 동일 패턴)·`Reservation`·`SeatInventory`에도 주입해 흩어진 `LocalDateTime.now()`를 `now(clock)`로 통일. 만료 스케줄러(T3-9)가 시간 의존이므로 그 시점에 함께 정리해 만료 판정 로직을 결정적으로 테스트 가능하게 만든다. (BookingService는 선반영됨)
 - [ ] **T3-10** Redis-DB reconcile 잡: 잔여/활성자 카운터·`avail` 드리프트 주기 보정 → DB(SoT)로 수렴
 - [ ] **T3-11** 통합 테스트(정합성 자동화): 중복/초과/만료복구 + reconcile 수렴 검증
 - **DoD(M3)**: 정상 16단계 E2E + 예외 6종 처리
@@ -72,6 +73,9 @@
 - [ ] **T4-8** L6 지속 부하(soak)
 - [ ] **T4-9** 실험 E1(선점/락)·E2(입장 제어)·E3(조회 캐시) Before/After + 그래프
 - [ ] **T4-10** 실험 E5: 가상 스레드(Virtual Thread) on/off 성능 비교 — `spring.threads.virtual.enabled` 토글, 동일 부하(L2)에서 처리량·p95/p99·스레드 점유 Before/After + 그래프. 락 대기(Redisson)·DB I/O 블로킹 구간이 캐리어 스레드를 점유하지 않음을 검증. (JDK 21+ / Spring Boot 4.0, JDK 24 JEP 491로 synchronized 핀닝 해소)
+- [ ] **T4-11** 실험 E6: 분산 락 라이브러리 비교 — **Redisson** vs 대안(① Spring Integration `RedisLockRegistry`, ② 직접 구현 Lettuce `SET NX PX` + Lua 해제, ③ (선택) ZooKeeper Curator `InterProcessMutex`). 동일 부하(L1 단일좌석 경쟁)에서 **초과 판매 0건 정합성 유지를 전제**로 처리량·p95/p99·락 획득 지연·CPU/네트워크 RTT를 Before/After + 그래프로 비교. Redisson 부가기능(watchdog 자동 갱신, pub/sub 기반 대기 vs 스핀 폴링, 재진입, fair lock)이 성능·구현 복잡도·운영 안정성에 미치는 영향을 분석하고, 락 라이브러리 선택 트레이드오프 근거를 README에 기록. (T2-4 Redisson PoC 재사용, `test/e6-lock-lib-comparison` 브랜치)
+  - 구현: 각 라이브러리를 `infra.DistributedLock` 인터페이스 구현체로 추가 → `@Qualifier`/프로파일로 토글, 호출 측(`LockBookingService`) 무변경. (Redisson 결합은 이미 `RedissonDistributedLock`으로 분리됨)
+  - 테스트: 두 번째 구현체 투입 시 `DistributedLock` **계약 테스트를 추상 베이스 테스트로 추출**(미획득 시 null·action의 null 통과 등 구현체 공통 행위). 인터럽트 복원·`unlock` 가드 등 라이브러리 고유 디테일은 각 구현체 테스트에 둔다.
 - **DoD(M4)**: SLO 충족/미달 사유 + Before/After 그래프 + 임계점 수치
 
 ## P5. 비동기 사이드 (Could)
