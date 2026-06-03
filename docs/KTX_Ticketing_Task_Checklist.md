@@ -13,10 +13,10 @@
 | P1 설계 확정 | 6 | 6 | 100% | M1 ✅ |
 | P2 핵심 PoC | 5 | 5 | 100% | M2 ✅ |
 | P3 기능 구현 | 13 | 0 | 0% | M3 |
-| P4 성능 측정 | 11 | 0 | 0% | M4 |
+| P4 성능 측정 | 12 | 0 | 0% | M4 |
 | P5 비동기 | 3 | 0 | 0% | — |
 | P6 산출물 | 7 | 0 | 0% | M5 |
-| **합계** | **49** | **15** | **31%** | |
+| **합계** | **50** | **15** | **30%** | |
 
 ---
 
@@ -76,6 +76,9 @@
 - [ ] **T4-11** 실험 E6: 분산 락 라이브러리 비교 — **Redisson** vs 대안(① Spring Integration `RedisLockRegistry`, ② 직접 구현 Lettuce `SET NX PX` + Lua 해제, ③ (선택) ZooKeeper Curator `InterProcessMutex`). 동일 부하(L1 단일좌석 경쟁)에서 **초과 판매 0건 정합성 유지를 전제**로 처리량·p95/p99·락 획득 지연·CPU/네트워크 RTT를 Before/After + 그래프로 비교. Redisson 부가기능(watchdog 자동 갱신, pub/sub 기반 대기 vs 스핀 폴링, 재진입, fair lock)이 성능·구현 복잡도·운영 안정성에 미치는 영향을 분석하고, 락 라이브러리 선택 트레이드오프 근거를 README에 기록. (T2-4 Redisson PoC 재사용, `test/e6-lock-lib-comparison` 브랜치)
   - 구현: 각 라이브러리를 `infra.DistributedLock` 인터페이스 구현체로 추가 → `@Qualifier`/프로파일로 토글, 호출 측(`LockBookingService`) 무변경. (Redisson 결합은 이미 `RedissonDistributedLock`으로 분리됨)
   - 테스트: 두 번째 구현체 투입 시 `DistributedLock` **계약 테스트를 추상 베이스 테스트로 추출**(미획득 시 null·action의 null 통과 등 구현체 공통 행위). 인터럽트 복원·`unlock` 가드 등 라이브러리 고유 디테일은 각 구현체 테스트에 둔다.
+- [ ] **T4-12** 실험 E7: 선점 백엔드(in-memory 스토어) 비교 — **Redis Set** vs **Memcached**. `MemcachedPreemption` 을 `SeatPreemption` 인터페이스 구현체로 추가(spymemcached 등 클라이언트 + docker-compose memcached). Memcached는 Set·원자 SREM/SPOP가 없어 **SEAT 선점은 좌석별 키 `add`(존재 시 실패=원자 점유), AUTO는 Set 부재로 별도 인덱스/CAS 우회 필요** — 이 *부적합성 분석 자체가 기술선택 트레이드오프 근거*(C6). 동일 부하(L1)에서 **초과 판매 0건 전제**로 처리량·p95/p99·라운드트립을 Before/After + 그래프로 비교, README 기록.
+  - 구현: `@ConditionalOnProperty(name="booking.preemption", havingValue=…)` 로 구현체 토글, 호출 측(`BookingService`) 무변경. (선점 추상화는 이미 `SeatPreemption`/`RedisSetPreemption` 으로 분리됨)
+  - Valkey/KeyDB/Dragonfly 등 **Redis 와이어 호환** 스토어는 구현체 불필요 — `RedisSetPreemption` 그대로 두고 접속 엔드포인트만 교체해 부하·비용 벤치마크(코드 변경 0).
 - **DoD(M4)**: SLO 충족/미달 사유 + Before/After 그래프 + 임계점 수치
 
 ## P5. 비동기 사이드 (Could)
