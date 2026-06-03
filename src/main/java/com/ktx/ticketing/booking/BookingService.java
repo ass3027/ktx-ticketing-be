@@ -5,6 +5,7 @@ import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 /**
@@ -20,15 +21,18 @@ public class BookingService {
     private final SeatInventoryRepository seatInventoryRepository;
     private final ReservationRepository reservationRepository;
     private final UserRepository userRepository;
+    private final Clock clock;
 
     public BookingService(SeatPreemptionService preemption,
                           SeatInventoryRepository seatInventoryRepository,
                           ReservationRepository reservationRepository,
-                          UserRepository userRepository) {
+                          UserRepository userRepository,
+                          Clock clock) {
         this.preemption = preemption;
         this.seatInventoryRepository = seatInventoryRepository;
         this.reservationRepository = reservationRepository;
         this.userRepository = userRepository;
+        this.clock = clock;
     }
 
     /**
@@ -61,7 +65,7 @@ public class BookingService {
         SeatInventory inventory = seatInventoryRepository.findById(seatInventoryId)
                 .orElseThrow(() -> new IllegalStateException("SeatInventory not found: " + seatInventoryId));
 
-        inventory.hold(LocalDateTime.now().plusMinutes(HELD_TTL_MINUTES));
+        inventory.hold(LocalDateTime.now(clock).plusMinutes(HELD_TTL_MINUTES));
         Reservation reservation = Reservation.hold(user, inventory, HELD_TTL_MINUTES);
         reservationRepository.save(reservation);
         return reservation;
