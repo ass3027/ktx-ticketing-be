@@ -1,5 +1,6 @@
 package com.ktx.ticketing.booking;
 
+import org.jspecify.annotations.Nullable;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -27,7 +28,7 @@ public class SeatPreemptionService {
     }
 
     /** AUTO 모드: 임의 좌석 선점. 반환값 없으면 잔여석 없음 */
-    public Long popAnySeat(Long scheduleId) {
+    public @Nullable Long popAnySeat(Long scheduleId) {
         String value = redis.opsForSet().pop(key(scheduleId));
         return value == null ? null : Long.parseLong(value);
     }

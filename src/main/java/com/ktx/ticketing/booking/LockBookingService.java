@@ -1,6 +1,7 @@
 package com.ktx.ticketing.booking;
 
 import com.ktx.ticketing.domain.Reservation;
+import org.jspecify.annotations.Nullable;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.stereotype.Service;
@@ -31,7 +32,7 @@ public class LockBookingService {
      * SEAT 모드: 분산락 획득 후 지정 좌석 HELD 전이.
      * @return Reservation, 락 획득 실패 또는 좌석 이미 점유 시 null
      */
-    public Reservation bookSeat(Long userId, Long scheduleId, Long seatInventoryId) {
+    public @Nullable Reservation bookSeat(Long userId, Long scheduleId, Long seatInventoryId) {
         RLock lock = redisson.getLock(LOCK_PREFIX + scheduleId);
         try {
             if (!lock.tryLock(WAIT_SECONDS, LEASE_SECONDS, TimeUnit.SECONDS)) {
@@ -52,7 +53,7 @@ public class LockBookingService {
      * AUTO 모드: 분산락 획득 후 AVAILABLE 좌석 1개 조회 → HELD 전이.
      * @return Reservation, 락 획득 실패 또는 잔여석 없으면 null
      */
-    public Reservation bookAuto(Long userId, Long scheduleId) {
+    public @Nullable Reservation bookAuto(Long userId, Long scheduleId) {
         RLock lock = redisson.getLock(LOCK_PREFIX + scheduleId);
         try {
             if (!lock.tryLock(WAIT_SECONDS, LEASE_SECONDS, TimeUnit.SECONDS)) {

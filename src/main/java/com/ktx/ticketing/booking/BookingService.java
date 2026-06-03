@@ -1,6 +1,7 @@
 package com.ktx.ticketing.booking;
 
 import com.ktx.ticketing.domain.*;
+import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,7 +36,7 @@ public class BookingService {
      * @return 생성된 Reservation, 선점 실패 시 null
      */
     @Transactional
-    public Reservation bookSeat(Long userId, Long scheduleId, Long seatInventoryId) {
+    public @Nullable Reservation bookSeat(Long userId, Long scheduleId, Long seatInventoryId) {
         if (!preemption.tryPreemptSeat(scheduleId, seatInventoryId)) {
             return null; // 이미 다른 요청이 선점
         }
@@ -47,7 +48,7 @@ public class BookingService {
      * @return 생성된 Reservation, 잔여석 없으면 null
      */
     @Transactional
-    public Reservation bookAuto(Long userId, Long scheduleId) {
+    public @Nullable Reservation bookAuto(Long userId, Long scheduleId) {
         Long seatInventoryId = preemption.popAnySeat(scheduleId);
         if (seatInventoryId == null) {
             return null; // 잔여석 없음
