@@ -1,17 +1,13 @@
 package com.ktx.ticketing.booking;
 
 import com.ktx.ticketing.domain.*;
+import com.ktx.ticketing.support.AbstractIntegrationTest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.OptimisticLockingFailureException;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.test.context.ActiveProfiles;
-
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.*;
@@ -22,16 +18,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * T2-5: 동시 1,000 요청 oversell=0 검증 (M2 리스크 게이트)
  *
- * 실행 전제: Docker MySQL + Redis 기동 필요
- *   docker compose up mysql redis
+ * 인프라(MySQL/Redis)는 {@link AbstractIntegrationTest} 의 Testcontainers 가 자동 기동한다.
+ * 시드 데이터는 local 프로필의 DataInitializer 가 생성한다(SeatInventory id=1, schedule id=1).
  *
  * E1 실험 데이터:
  *   (A) Redis 선점(SREM) + 낙관락 → 성공=1 보장
  *   (B) Redisson 분산락 → 성공=1 보장 (성능 비교용)
  */
-@SpringBootTest
-@ActiveProfiles("local")
-class ConcurrencyPocTest {
+class ConcurrencyPocTest extends AbstractIntegrationTest {
 
     static final int THREAD_COUNT = 1000;
     static final Long SCHEDULE_ID = 1L;
@@ -42,7 +36,6 @@ class ConcurrencyPocTest {
     @Autowired SeatPreemption preemptionService;
     @Autowired SeatInventoryRepository seatInventoryRepository;
     @Autowired ReservationRepository reservationRepository;
-    @Autowired StringRedisTemplate redis;
 
     @BeforeEach
     void resetState() {
@@ -130,10 +123,9 @@ class ConcurrencyPocTest {
         CountDownLatch start = new CountDownLatch(1);
         CountDownLatch done = new CountDownLatch(threadCount);
 
-        List<Future<?>> futures = new ArrayList<>();
         for (int i = 0; i < threadCount; i++) {
             final long userId = (i % 10000) + 1; // user1~user10000 순환
-            futures.add(executor.submit(() -> {
+            executor.submit(() -> {
                 ready.countDown();
                 try {
                     start.await(); // 모든 스레드 준비 후 동시 시작
@@ -151,7 +143,7 @@ class ConcurrencyPocTest {
                 } finally {
                     done.countDown();
                 }
-            }));
+            });
         }
 
         ready.await(); // 모든 스레드 준비 완료 대기

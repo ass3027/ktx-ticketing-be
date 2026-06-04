@@ -49,6 +49,13 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     testImplementation("org.mockito:mockito-core:5.14.2")
     mockitoAgent("org.mockito:mockito-core:5.14.2") { isTransitive = false }
+
+    // 통합 테스트 인프라(MySQL/Redis)를 Testcontainers로 자동 기동. 버전은 Spring Boot BOM이 관리(2.0.x).
+    // 2.0.x부터 모듈 아티팩트명에 testcontainers- 접두사가 붙고, redis 전용 모듈은 없으므로
+    // Redis는 testcontainers 코어의 GenericContainer로 띄운다.
+    testImplementation("org.springframework.boot:spring-boot-testcontainers")
+    testImplementation("org.testcontainers:testcontainers-junit-jupiter")
+    testImplementation("org.testcontainers:testcontainers-mysql")
 }
 
 tasks.withType<Test> {
