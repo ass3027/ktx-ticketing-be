@@ -48,9 +48,9 @@
 ### ① 조회/입장
 - [x] **T3-1** 운행 리스트 조회 API → `GET /api/schedules` 커서 페이징(`from`+`afterId`, limit 기본 8/최대 100). `schedule` 패키지. 잔여석/매진은 T3-2.
 - [x] **T3-2** 매진/잔여석 표시 (Redis 카운터/캐시, 약한 일관성) → 잔여석 = `avail:` Set 크기(SCARD) **단일 소스** 재사용(별도 `remain:` 미도입). `ScheduleResponse.remainingSeats/soldOut`. SCARD 직렬 루프(파이프라인/캐시는 E3 측정 후).
-- [ ] **T3-3** 입장 제어: 활성자 카운터(상한 K)
-- [ ] **T3-4** 초과 시 429/503 + Retry-After
-- [ ] **T3-5** EntryToken 발급/만료/검증
+- [x] **T3-3** 입장 제어: 활성자 카운터(상한 K) → `active:{id}` INCR-rollback(검사-후-증가 race 회피). K는 `booking.admission.max-active` 외부화(T4-7서 확정).
+- [x] **T3-4** 초과 시 429/503 + Retry-After → `429 TOO_MANY_REQUESTS` + `Retry-After` 헤더. `AdmissionResult.Rejected(retryAfter)`.
+- [x] **T3-5** EntryToken 발급/만료/검증 → 불투명 UUID + `entry:{token}`(TTL 10m) Redis 저장. `EntryTokenStore` issue/resolve/revoke. 검증(resolve)은 T3-6 예매가 사용.
 ### ② 예매/결제
 - [x] **T3-5b** (설계 재검토) 예매 결과 반환 타입 결정 → **sealed `BookingResult` 채택** (record: Success/SeatTaken/SoldOut/Overloaded). 근거: 경쟁 패배가 1,000 요청 중 다수 = 정상 흐름 → 예외 부적합(값으로 표현), 컨트롤러가 exhaustive `switch` 로 사유별 HTTP(201/409/410/503+Retry-After) 매핑 시 누락을 컴파일러가 검출. `BookingService`/`LockBookingService` 공개 진입점의 `@Nullable Reservation` 반환 제거. 트랜잭션 내부 헬퍼(`BookingTransactionHelper`)는 `@Nullable` 유지, 매핑은 `LockBookingService` 가 담당. `Overloaded` 는 타입만 정의(발생은 입장 제어 T3-3~5). `ConcurrencyPocTest` 성공 판정은 `instanceof Success` 로 전환.
 - [ ] **T3-6** 예매 API `mode=SEAT` (P2 선점 통합)

@@ -13,9 +13,9 @@
 | T3-5b 예매 결과 반환 타입 결정 | ✅ | sealed `BookingResult` 채택 |
 | T3-1 운행 리스트 조회 API | ✅ | `GET /api/schedules` 커서 페이징, `schedule` 패키지 |
 | T3-2 매진/잔여석 표시 | ✅ | `avail:` SCARD 단일 소스, `remainingSeats`/`soldOut` |
-| T3-3 입장 제어(상한 K) | ⬜ | |
-| T3-4 초과 시 429/503 + Retry-After | ⬜ | |
-| T3-5 EntryToken 발급/만료/검증 | ⬜ | |
+| T3-3 입장 제어(상한 K) | ✅ | `active:` INCR-rollback, K 외부화 |
+| T3-4 초과 시 429/503 + Retry-After | ✅ | 429 + `Retry-After` 헤더 |
+| T3-5 EntryToken 발급/만료/검증 | ✅ | 불투명 UUID + `entry:` TTL, `admission` 패키지 |
 | T3-6 예매 API `mode=SEAT` | ⬜ | |
 | T3-7 예매 API `mode=AUTO` | ⬜ | |
 | T3-8 결제 확정/취소 + 카운터 동기화 | ⬜ | |
@@ -171,3 +171,57 @@ GET /api/schedules?dep=서울&arr=부산&from=2026-07-01T09:00&afterId=7&limit=8
 - `compileJava` ✅
 - `ScheduleQueryServiceTest` 10건 ✅
 - 전체 테스트 ✅ — 회귀 없음(48s)
+
+---
+
+## T3-3~5 — 입장 제어 (`POST /api/entry`) (2026-06-04)
+
+### 결정
+비가시 입장 제어. 활성자 `< K` 면 EntryToken 발급(+1), `≥ K` 면 429 + Retry-After. 신규 `admission` 패키지.
+
+| 결정 | 채택 | 근거 |
+|------|------|------|
+| 활성자 동시성 | **INCR 반환값으로 판정 → 초과 시 DECR 롤백** | "GET→비교→INCR" 3단계는 비원자라 K 초과 가능. INCR 원자 반환값으로 race 회피. Lua는 근사 일관성엔 과함 |
+| EntryToken | **불투명 UUID + Redis 저장**(`entry:{token}`) | 검증=Redis 조회, 만료/회수가 TTL·삭제로 일관. JWT는 즉시 무효화 어려움 |
+| 상한 K | **설정 외부화**(`booking.admission.max-active`) | L5 임계점 탐색(T4-7)에서 역산·확정. 하드코딩 금지 — 측정 후 설정만 변경 |
+| 초과 응답 | **429 + Retry-After** | 사용자별 재시도 안내(부하 셰딩). 순번 미노출 |
+| 결과 타입 | 작은 sealed `AdmissionResult`(Admitted/Rejected) | "토큰 or 초과" 2가지 — 컨트롤러 switch 매핑, 초과는 정상 흐름이라 값으로 표현 |
+
+### API
+```
+POST /api/entry   body: { scheduleId, userId }
+  201 + { token }                       (활성자 < K)
+  429 + Retry-After: 5                  (활성자 ≥ K, 순번 없음)
+```
+
+### 변경 범위 (`admission` 패키지 신규)
+| 파일 | 역할 |
+|------|------|
+| `package-info.java` | `@NullMarked` + 입장 제어 설명 |
+| `AdmissionProperties.java` | `booking.admission.*` 설정 바인딩(maxActive/tokenTtl/retryAfter) |
+| `AdmissionService.java` | `tryEnter`(INCR-rollback) + `leave`(슬롯 반환, T3-8/9서 호출) |
+| `EntryToken.java` / `EntrySession.java` | 불투명 토큰 / 토큰이 가리키는 (scheduleId,userId) |
+| `EntryTokenStore.java` | `entry:{token}` issue/resolve/revoke (Redis, TTL) |
+| `AdmissionResult.java` | sealed Admitted(token) / Rejected(retryAfter) |
+| `EntryController.java` | `POST /api/entry`, 429 + Retry-After 매핑 |
+| `KtxTicketingApplication.java` | `@ConfigurationPropertiesScan` 추가 |
+| `application.yml`(+ test) | admission 설정값(max-active=100 잠정) |
+
+### 설계 판단
+- **`active:` ≠ `avail:`**: 활성 세션 수(입장 슬롯)와 가용 좌석 풀은 별개. 입장은 "예매 진행 중 인원" 제한, 선점은 "좌석" 제한.
+- **`leave()` 는 호출처가 아직 없음**: 세션 종료(예매 확정 T3-8 / 취소 / 만료 T3-9)에서 활성 슬롯을 회수할 진입점으로 미리 둠. 현재 입장만으로는 슬롯이 TTL로만 회수됨 — T3-8/9에서 연결.
+- **토큰 검증(resolve)도 호출처 미연결**: T3-6 예매 API가 토큰을 받아 `resolve` → `EntrySession` 으로 검증할 예정. T3-3~5는 발급까지.
+
+### 테스트 (`AdmissionServiceTest`, Mockito 4건)
+핵심 = INCR-rollback 상한 로직:
+- K 미만 → 토큰 발급 + DECR 롤백 안 함
+- 정확히 K → 아직 허용(초과 아님, 경계)
+- K 초과 → DECR 롤백 + Rejected, 토큰 미발급
+- `leave` → 카운터 감소
+
+> `EntryTokenStore` 의 Redis 조작·`resolve` 파싱과 실제 동시 호출 원자성은 통합 테스트(T3-11) 책임.
+
+### 검증 결과
+- `compileJava` ✅
+- `AdmissionServiceTest` 4건 ✅
+- 전체 테스트 ✅ — 설정 바인딩 컨텍스트 로딩 정상, 회귀 없음(46s)

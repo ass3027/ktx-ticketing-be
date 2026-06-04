@@ -25,3 +25,10 @@ spring:
 
 server:
   port: 8080
+
+booking:
+  admission:
+    # 동시 활성 세션 상한 K — L5 임계점 탐색(T4-7)에서 역산·확정 전까지의 잠정값.
+    max-active: 100
+    token-ttl: 10m
+    retry-after: 5s

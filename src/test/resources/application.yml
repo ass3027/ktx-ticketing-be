@@ -3,3 +3,9 @@ spring:
     hibernate:
       ddl-auto: create-drop
     show-sql: false
+
+booking:
+  admission:
+    max-active: 100
+    token-ttl: 10m
+    retry-after: 5s
