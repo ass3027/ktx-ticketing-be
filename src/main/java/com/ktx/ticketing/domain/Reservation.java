@@ -1,16 +1,22 @@
 package com.ktx.ticketing.domain;
 
 import jakarta.persistence.*;
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "reservation")
 @Getter
-@NoArgsConstructor
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+@AllArgsConstructor(access = AccessLevel.PRIVATE)
+@Builder(access = AccessLevel.PRIVATE)
 public class Reservation {
 
     /** HELD 상태의 수명. 좌석 상태머신(AVAILABLE→HELD→SOLD)의 핵심 도메인 규칙 — M1에서 5분으로 동결. */
@@ -41,14 +47,20 @@ public class Reservation {
     private LocalDateTime confirmedAt;
     private LocalDateTime cancelledAt;
 
-    public static Reservation hold(User user, SeatInventory seatInventory) {
-        Reservation r = new Reservation();
-        r.user = user;
-        r.seatInventory = seatInventory;
-        r.status = ReservationStatus.HELD;
-        r.heldAt = LocalDateTime.now();
-        r.expiresAt = r.heldAt.plus(HELD_TTL);
-        return r;
+    /**
+     * 예약 점유와 좌석 점유는 하나의 원자적 동작이다 — 이 진입점에서 시각을 한 번 계산해
+     * Reservation·SeatInventory가 같은 heldAt/expiresAt을 공유한다(시각 단일 출처, skew 방지).
+     */
+    public static Reservation hold(User user, SeatInventory seatInventory, Clock clock) {
+        LocalDateTime heldAt = LocalDateTime.now(clock);
+        seatInventory.markHeld(heldAt);
+        return Reservation.builder()
+                .user(user)
+                .seatInventory(seatInventory)
+                .status(ReservationStatus.HELD)
+                .heldAt(heldAt)
+                .expiresAt(heldAt.plus(HELD_TTL))
+                .build();
     }
 
     public void confirm() {

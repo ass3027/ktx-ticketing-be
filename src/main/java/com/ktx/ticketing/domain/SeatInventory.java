@@ -44,10 +44,14 @@ public class SeatInventory {
         this.status = SeatStatus.AVAILABLE;
     }
 
-    public void hold() {
+    /**
+     * 좌석을 HELD로 전이한다. 시각은 호출자(Reservation.hold)가 계산해 주입한다 —
+     * SeatInventory가 직접 now()를 부르지 않으므로 예약과 좌석의 만료시각이 항상 일치한다.
+     */
+    public void markHeld(LocalDateTime heldAt) {
         this.status = SeatStatus.HELD;
-        this.heldAt = LocalDateTime.now();
-        this.expiresAt = this.heldAt.plus(Reservation.HELD_TTL);
+        this.heldAt = heldAt;
+        this.expiresAt = heldAt.plus(Reservation.HELD_TTL);
     }
 
     public void confirm() {

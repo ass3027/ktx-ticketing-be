@@ -7,7 +7,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
-import java.time.LocalDateTime;
 
 /**
  * 선점(SeatPreemption, 기본 Redis Set) 후 DB 상태전이를 수행한다.
@@ -53,10 +52,7 @@ public class BookingService {
         SeatInventory inventory = seatInventoryRepository.findById(seatInventoryId)
                 .orElseThrow(() -> new IllegalStateException("SeatInventory not found: " + seatInventoryId));
 
-        inventory.hold(LocalDateTime.now(clock).plusMinutes(HELD_TTL_MINUTES));
-        Reservation reservation = Reservation.hold(user, inventory, HELD_TTL_MINUTES);
-        inventory.hold();
-        Reservation reservation = Reservation.hold(user, inventory);
+        Reservation reservation = Reservation.hold(user, inventory, clock);
         reservationRepository.save(reservation);
         return reservation;
     }

@@ -3,12 +3,13 @@ package com.ktx.ticketing.domain;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.time.temporal.ChronoUnit;
+import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.within;
 
 class SeatInventoryTest {
+
+    private static final LocalDateTime HELD_AT = LocalDateTime.of(2026, 7, 1, 8, 0);
 
     private SeatInventory inventory;
 
@@ -18,19 +19,18 @@ class SeatInventoryTest {
     }
 
     @Test
-    void hold_상태를_HELD로_변경하고_만료시각_HELD_TTL로_설정() {
-        inventory.hold();
+    void markHeld_상태를_HELD로_변경하고_만료시각을_주입시각_기준_HELD_TTL로_설정() {
+        inventory.markHeld(HELD_AT);
 
         assertThat(inventory.getStatus()).isEqualTo(SeatStatus.HELD);
-        assertThat(inventory.getHeldAt()).isNotNull();
-        // expiresAt = heldAt + HELD_TTL (Reservation 도메인 규칙 공유)
-        assertThat(inventory.getExpiresAt())
-            .isCloseTo(inventory.getHeldAt().plus(Reservation.HELD_TTL), within(1, ChronoUnit.SECONDS));
+        assertThat(inventory.getHeldAt()).isEqualTo(HELD_AT);
+        // 시각은 호출자가 주입 — SeatInventory는 now()를 부르지 않으므로 오차 없이 단언
+        assertThat(inventory.getExpiresAt()).isEqualTo(HELD_AT.plus(Reservation.HELD_TTL));
     }
 
     @Test
     void confirm_상태를_SOLD로_변경() {
-        inventory.hold();
+        inventory.markHeld(HELD_AT);
 
         inventory.confirm();
 
@@ -39,7 +39,7 @@ class SeatInventoryTest {
 
     @Test
     void release_상태를_AVAILABLE로_복구하고_타임스탬프_초기화() {
-        inventory.hold();
+        inventory.markHeld(HELD_AT);
 
         inventory.release();
 

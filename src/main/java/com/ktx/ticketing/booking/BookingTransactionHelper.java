@@ -6,7 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
+import java.time.Clock;
 import java.util.List;
 
 /**
@@ -20,6 +20,7 @@ public class BookingTransactionHelper {
     private final SeatInventoryRepository seatInventoryRepository;
     private final ReservationRepository reservationRepository;
     private final UserRepository userRepository;
+    private final Clock clock;
 
     @Transactional
     public @Nullable Reservation holdSeat(Long userId, Long seatInventoryId) {
@@ -31,10 +32,7 @@ public class BookingTransactionHelper {
         }
 
         User user = userRepository.getReferenceById(userId);
-        inventory.hold();
-        Reservation reservation = Reservation.hold(user, inventory);
-        inventory.hold(LocalDateTime.now().plusMinutes(BookingService.HELD_TTL_MINUTES));
-        Reservation reservation = Reservation.hold(user, inventory, BookingService.HELD_TTL_MINUTES);
+        Reservation reservation = Reservation.hold(user, inventory, clock);
         reservationRepository.save(reservation);
         return reservation;
     }
@@ -48,11 +46,7 @@ public class BookingTransactionHelper {
 
         User user = userRepository.getReferenceById(userId);
         SeatInventory inventory = available.getFirst();
-        inventory.hold(LocalDateTime.now().plusMinutes(BookingService.HELD_TTL_MINUTES));
-        Reservation reservation = Reservation.hold(user, inventory, BookingService.HELD_TTL_MINUTES);
-        SeatInventory inventory = available.get(0);
-        inventory.hold();
-        Reservation reservation = Reservation.hold(user, inventory);
+        Reservation reservation = Reservation.hold(user, inventory, clock);
         reservationRepository.save(reservation);
         return reservation;
     }

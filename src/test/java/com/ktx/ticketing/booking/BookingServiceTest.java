@@ -4,7 +4,6 @@ import com.ktx.ticketing.domain.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -56,9 +55,9 @@ class BookingServiceTest {
         assertThat(result.getStatus()).isEqualTo(ReservationStatus.HELD);
         verify(reservationRepository).save(result);
 
-        ArgumentCaptor<LocalDateTime> expiry = ArgumentCaptor.forClass(LocalDateTime.class);
-        verify(inventory).hold(expiry.capture());
-        assertThat(expiry.getValue()).isEqualTo(FIXED_NOW.plusMinutes(5)); // 5분 = 확정된 HELD TTL(T1-1)
+        // Reservation.hold가 좌석을 같은 시각으로 점유 — heldAt=FIXED_NOW, expiresAt은 +HELD_TTL(T1-1)
+        verify(inventory).markHeld(FIXED_NOW);
+        assertThat(result.getExpiresAt()).isEqualTo(FIXED_NOW.plus(Reservation.HELD_TTL));
     }
 
     @Test
@@ -73,9 +72,8 @@ class BookingServiceTest {
         assertThat(result.getStatus()).isEqualTo(ReservationStatus.HELD);
         verify(reservationRepository).save(result);
 
-        ArgumentCaptor<LocalDateTime> expiry = ArgumentCaptor.forClass(LocalDateTime.class);
-        verify(inventory).hold(expiry.capture());
-        assertThat(expiry.getValue()).isEqualTo(FIXED_NOW.plusMinutes(5));
+        verify(inventory).markHeld(FIXED_NOW);
+        assertThat(result.getExpiresAt()).isEqualTo(FIXED_NOW.plus(Reservation.HELD_TTL));
     }
 
     @Test
