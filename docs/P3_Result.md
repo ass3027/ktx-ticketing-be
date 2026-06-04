@@ -11,7 +11,7 @@
 | 태스크 | 상태 | 비고 |
 |--------|------|------|
 | T3-5b 예매 결과 반환 타입 결정 | ✅ | sealed `BookingResult` 채택 |
-| T3-1 운행 리스트 조회 API | ⬜ | |
+| T3-1 운행 리스트 조회 API | ✅ | `GET /api/schedules` 커서 페이징, `schedule` 패키지 |
 | T3-2 매진/잔여석 표시 | ⬜ | |
 | T3-3 입장 제어(상한 K) | ⬜ | |
 | T3-4 초과 시 429/503 + Retry-After | ⬜ | |
@@ -74,3 +74,61 @@ public sealed interface BookingResult {
 - `compileJava` / `compileTestJava` ✅
 - `BookingServiceTest`, `LockBookingServiceTest` ✅
 - `ConcurrencyPocTest` ✅ — 1,000 동시요청 **oversell=0 / 중복 예약=0 유지** (Testcontainers, 45s)
+
+---
+
+## T3-1 — 운행 리스트 조회 API (2026-06-04)
+
+### 결정
+`GET /api/schedules` — 무한 스크롤을 위한 **커서 페이징**. 신규 `com.ktx.ticketing.schedule` 패키지(읽기 기능 단위).
+
+| 항목 | 결정 | 근거 |
+|------|------|------|
+| 패키지 | `schedule` | `booking`(쓰기)과 동일한 기능 단위 패키징. `query` 는 CQRS 오해·이름 모호로 기각 |
+| 조회 모델 | `from + limit` 커서 페이징 | KTX 앱 무한 스크롤의 표준 구현 = 커서. 날짜 구간(`from~to`)은 페이징 별도 필요 + 구간 폭주 위험 |
+| 커서 키 | `(departureTime, id)` 복합 | 동일 출발시각 운행편의 누락·중복 방지(안정 정렬) |
+| limit | 기본 8 / 최대 100 / 최소 1 | 무한 스크롤 페이지 크기. 상한으로 부하 보호 |
+
+### API
+```
+GET /api/schedules?dep=서울&arr=부산&from=2026-07-01T09:00&afterId=7&limit=8
+```
+| 파라미터 | 필수 | 비고 |
+|---------|------|------|
+| `dep`, `arr` | ✅ | 출발/도착역 |
+| `from` | ✅ | ISO `LocalDateTime`. 이 시각 이후 운행편 |
+| `afterId` | — | 커서. 미지정 시 0 정규화 → `departureTime >= from` 효과 |
+| `limit` | — | 기본 8, 1~100 클램프 |
+
+응답 `{ items: [...], nextCursor: { from, afterId } | null }`.
+`nextCursor` 는 `items.size() == limit`(페이지 꽉 참)일 때만 발급, 마지막 페이지면 `null`.
+
+### 변경 범위
+| 파일 | 변경 |
+|------|------|
+| `schedule/package-info.java` | **신규** — `@NullMarked` + 읽기 경로 설명 |
+| `schedule/ScheduleResponse.java` | **신규** — 운행편 1건 DTO(`from(Schedule)`). T3-2 에서 잔여석/매진 필드 추가 예정 |
+| `schedule/ScheduleListResponse.java` | **신규** — `items` + `nextCursor`(중첩 `Cursor` record) |
+| `schedule/ScheduleQueryService.java` | **신규** — limit 클램프·afterId 정규화·nextCursor 계산, 조회는 리포지토리 위임 |
+| `schedule/ScheduleController.java` | **신규** — 프로젝트 첫 컨트롤러. `@DateTimeFormat` 으로 `from` 바인딩 |
+| `domain/ScheduleRepository.java` | `findPageAfter` JPQL 추가 — `train` fetch join(N+1 회피) + 복합 커서 + `Pageable` |
+
+### 설계 판단
+- **잔여석/매진은 이번 범위 제외**: DTO에 자리만 두고 T3-2(Redis 카운터, 약한 일관성)에서 채운다. 태스크 경계 유지.
+- **`train` fetch join**: 응답에 `trainNumber`/`name` 이 필요한데 `@ManyToOne(LAZY)` → N+1. 조회 p95 ≤ 200ms 목표상 fetch join 으로 한 번에 로딩.
+- **복합 커서 `afterId`**: `departureTime` 단독 커서는 동시각 운행편에서 누락/중복 발생. `id` 를 2차 정렬·커서로 추가해 안정화.
+
+### 테스트 (`ScheduleQueryServiceTest`, Mockito 단위 · 8건)
+커서 페이징 **경계 로직**에 집중:
+- limit 기본값(8)·상한(100)·하한(1) 클램프
+- `afterId` 미지정 시 0 정규화 / 지정 시 그대로 위임
+- 페이지 꽉 참 → `nextCursor` = 마지막 항목 `(from, id)`
+- 덜 참/빈 결과 → `nextCursor` null
+
+> JPQL 자체(fetch join·복합 커서 실제 동작)는 단위로 못 잡음 → **통합 테스트(T3-11)** 의 책임으로 명시.
+> 컨트롤러 바인딩/직렬화는 프레임워크 동작이라 단위 테스트 제외(프로젝트 테스트 규칙).
+
+### 검증 결과
+- `compileJava` ✅
+- `ScheduleQueryServiceTest` 8건 ✅
+- 전체 테스트 ✅ — 회귀 없음(`ConcurrencyPocTest` 포함, 45s)
