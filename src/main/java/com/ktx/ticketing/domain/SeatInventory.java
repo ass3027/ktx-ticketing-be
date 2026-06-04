@@ -44,10 +44,10 @@ public class SeatInventory {
         this.status = SeatStatus.AVAILABLE;
     }
 
-    public void hold(LocalDateTime expiresAt) {
+    public void hold() {
         this.status = SeatStatus.HELD;
         this.heldAt = LocalDateTime.now();
-        this.expiresAt = expiresAt;
+        this.expiresAt = this.heldAt.plus(Reservation.HELD_TTL);
     }
 
     public void confirm() {

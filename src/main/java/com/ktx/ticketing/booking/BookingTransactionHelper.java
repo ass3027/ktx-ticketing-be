@@ -5,7 +5,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -30,8 +29,8 @@ public class BookingTransactionHelper {
         }
 
         User user = userRepository.getReferenceById(userId);
-        inventory.hold(LocalDateTime.now().plusMinutes(BookingService.HELD_TTL_MINUTES));
-        Reservation reservation = Reservation.hold(user, inventory, BookingService.HELD_TTL_MINUTES);
+        inventory.hold();
+        Reservation reservation = Reservation.hold(user, inventory);
         reservationRepository.save(reservation);
         return reservation;
     }
@@ -45,8 +44,8 @@ public class BookingTransactionHelper {
 
         User user = userRepository.getReferenceById(userId);
         SeatInventory inventory = available.get(0);
-        inventory.hold(LocalDateTime.now().plusMinutes(BookingService.HELD_TTL_MINUTES));
-        Reservation reservation = Reservation.hold(user, inventory, BookingService.HELD_TTL_MINUTES);
+        inventory.hold();
+        Reservation reservation = Reservation.hold(user, inventory);
         reservationRepository.save(reservation);
         return reservation;
     }

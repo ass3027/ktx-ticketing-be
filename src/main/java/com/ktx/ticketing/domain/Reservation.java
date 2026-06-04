@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 
 @Entity
@@ -11,6 +12,9 @@ import java.time.LocalDateTime;
 @Getter
 @NoArgsConstructor
 public class Reservation {
+
+    /** HELD 상태의 수명. 좌석 상태머신(AVAILABLE→HELD→SOLD)의 핵심 도메인 규칙 — M1에서 5분으로 동결. */
+    public static final Duration HELD_TTL = Duration.ofMinutes(5);
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -37,13 +41,13 @@ public class Reservation {
     private LocalDateTime confirmedAt;
     private LocalDateTime cancelledAt;
 
-    public static Reservation hold(User user, SeatInventory seatInventory, int heldTtlMinutes) {
+    public static Reservation hold(User user, SeatInventory seatInventory) {
         Reservation r = new Reservation();
         r.user = user;
         r.seatInventory = seatInventory;
         r.status = ReservationStatus.HELD;
         r.heldAt = LocalDateTime.now();
-        r.expiresAt = r.heldAt.plusMinutes(heldTtlMinutes);
+        r.expiresAt = r.heldAt.plus(HELD_TTL);
         return r;
     }
 
