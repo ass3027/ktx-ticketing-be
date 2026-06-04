@@ -35,37 +35,49 @@ class LockBookingServiceTest {
     }
 
     @Test
-    void bookSeat_스케줄_락_키로_위임하고_지정좌석_점유결과를_반환() {
+    void bookSeat_스케줄_락_키로_위임하고_지정좌석_점유결과를_Success로_반환() {
         Reservation expected = mock(Reservation.class);
         when(txHelper.holdSeat(1L, 42L)).thenReturn(expected);
         simulateLockAcquired();
 
         var result = service.bookSeat(1L, 7L, 42L);
 
-        assertThat(result).isSameAs(expected);
+        assertThat(result).isInstanceOf(BookingResult.Success.class);
+        assertThat(((BookingResult.Success) result).reservation()).isSameAs(expected);
         verify(lock).executeWithLock(eq("schedule:7"), any());
     }
 
     @Test
-    void bookAuto_스케줄_락_키로_위임하고_자동배정_결과를_반환() {
+    void bookAuto_스케줄_락_키로_위임하고_자동배정_결과를_Success로_반환() {
         Reservation expected = mock(Reservation.class);
         when(txHelper.holdAnySeat(1L, 7L)).thenReturn(expected);
         simulateLockAcquired();
 
         var result = service.bookAuto(1L, 7L);
 
-        assertThat(result).isSameAs(expected);
+        assertThat(result).isInstanceOf(BookingResult.Success.class);
+        assertThat(((BookingResult.Success) result).reservation()).isSameAs(expected);
         verify(lock).executeWithLock(eq("schedule:7"), any());
     }
 
     @Test
-    void bookSeat_락_미획득시_좌석점유를_시도하지_않고_null_반환() {
+    void bookSeat_락_미획득시_좌석점유를_시도하지_않고_SeatTaken_반환() {
         // executeWithLock 이 (락 미획득을 모사하여) action 을 실행하지 않고 null 반환
         when(lock.executeWithLock(anyString(), any())).thenReturn(null);
 
         var result = service.bookSeat(1L, 7L, 42L);
 
-        assertThat(result).isNull();
+        assertThat(result).isInstanceOf(BookingResult.SeatTaken.class);
+        verifyNoInteractions(txHelper);
+    }
+
+    @Test
+    void bookAuto_락_미획득시_좌석점유를_시도하지_않고_SoldOut_반환() {
+        when(lock.executeWithLock(anyString(), any())).thenReturn(null);
+
+        var result = service.bookAuto(1L, 7L);
+
+        assertThat(result).isInstanceOf(BookingResult.SoldOut.class);
         verifyNoInteractions(txHelper);
     }
 }

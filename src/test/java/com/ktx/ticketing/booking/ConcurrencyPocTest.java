@@ -111,7 +111,7 @@ class ConcurrencyPocTest extends AbstractIntegrationTest {
 
     @FunctionalInterface
     interface BookingAction {
-        Object book(Long userId);
+        BookingResult book(Long userId);
     }
 
     private void runConcurrently(int threadCount, BookingAction action,
@@ -129,11 +129,11 @@ class ConcurrencyPocTest extends AbstractIntegrationTest {
                 ready.countDown();
                 try {
                     start.await(); // 모든 스레드 준비 후 동시 시작
-                    Object result = action.book(userId);
-                    if (result != null) {
+                    BookingResult result = action.book(userId);
+                    if (result instanceof BookingResult.Success) {
                         successCount.incrementAndGet();
                     } else {
-                        failCount.incrementAndGet();
+                        failCount.incrementAndGet(); // SeatTaken/SoldOut — 정상 경쟁 패배
                     }
                 } catch (OptimisticLockingFailureException | CannotAcquireLockException e) {
                     failCount.incrementAndGet(); // 경합 패배 — 정상 실패 경로

@@ -52,7 +52,7 @@
 - [ ] **T3-4** 초과 시 429/503 + Retry-After
 - [ ] **T3-5** EntryToken 발급/만료/검증
 ### ② 예매/결제
-- [ ] **T3-5b** (설계 재검토) 예매 결과 반환 타입 결정: 현행 `null` 반환을 sealed `BookingResult`(record: Success/SeatTaken/SoldOut/Overloaded) + exhaustive switch 로 교체할지 결정. 컨트롤러에서 사유별 HTTP 매핑(409/410/503 Retry-After) 필요성·예외 비용(경쟁 패배가 다수 케이스 → 예외 부적합) 근거로 판단. 채택 시 booking 패키지의 `@Nullable` 반환 표기 제거. 미채택 시 null + `@Nullable` 유지 사유 기록.
+- [x] **T3-5b** (설계 재검토) 예매 결과 반환 타입 결정 → **sealed `BookingResult` 채택** (record: Success/SeatTaken/SoldOut/Overloaded). 근거: 경쟁 패배가 1,000 요청 중 다수 = 정상 흐름 → 예외 부적합(값으로 표현), 컨트롤러가 exhaustive `switch` 로 사유별 HTTP(201/409/410/503+Retry-After) 매핑 시 누락을 컴파일러가 검출. `BookingService`/`LockBookingService` 공개 진입점의 `@Nullable Reservation` 반환 제거. 트랜잭션 내부 헬퍼(`BookingTransactionHelper`)는 `@Nullable` 유지, 매핑은 `LockBookingService` 가 담당. `Overloaded` 는 타입만 정의(발생은 입장 제어 T3-3~5). `ConcurrencyPocTest` 성공 판정은 `instanceof Success` 로 전환.
 - [ ] **T3-6** 예매 API `mode=SEAT` (P2 선점 통합)
 - [ ] **T3-7** 예매 API `mode=AUTO`
 - [ ] **T3-8** 결제 확정(HELD→SOLD) + 취소 + 카운터/활성자 동기화

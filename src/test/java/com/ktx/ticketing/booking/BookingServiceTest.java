@@ -50,14 +50,16 @@ class BookingServiceTest {
         when(userRepository.getReferenceById(USER_ID)).thenReturn(new User("test@ktx.com", "홍길동"));
         when(seatInventoryRepository.findById(SEAT_INVENTORY_ID)).thenReturn(Optional.of(inventory));
 
-        Reservation result = bookingService.bookSeat(USER_ID, SCHEDULE_ID, SEAT_INVENTORY_ID);
+        BookingResult result = bookingService.bookSeat(USER_ID, SCHEDULE_ID, SEAT_INVENTORY_ID);
 
-        assertThat(result.getStatus()).isEqualTo(ReservationStatus.HELD);
-        verify(reservationRepository).save(result);
+        assertThat(result).isInstanceOf(BookingResult.Success.class);
+        Reservation reservation = ((BookingResult.Success) result).reservation();
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.HELD);
+        verify(reservationRepository).save(reservation);
 
         // Reservation.hold가 좌석을 같은 시각으로 점유 — heldAt=FIXED_NOW, expiresAt은 +HELD_TTL(T1-1)
         verify(inventory).markHeld(FIXED_NOW);
-        assertThat(result.getExpiresAt()).isEqualTo(FIXED_NOW.plus(Reservation.HELD_TTL));
+        assertThat(reservation.getExpiresAt()).isEqualTo(FIXED_NOW.plus(Reservation.HELD_TTL));
     }
 
     @Test
@@ -67,28 +69,32 @@ class BookingServiceTest {
         when(userRepository.getReferenceById(USER_ID)).thenReturn(new User("test@ktx.com", "홍길동"));
         when(seatInventoryRepository.findById(SEAT_INVENTORY_ID)).thenReturn(Optional.of(inventory));
 
-        Reservation result = bookingService.bookAuto(USER_ID, SCHEDULE_ID);
+        BookingResult result = bookingService.bookAuto(USER_ID, SCHEDULE_ID);
 
-        assertThat(result.getStatus()).isEqualTo(ReservationStatus.HELD);
-        verify(reservationRepository).save(result);
+        assertThat(result).isInstanceOf(BookingResult.Success.class);
+        Reservation reservation = ((BookingResult.Success) result).reservation();
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.HELD);
+        verify(reservationRepository).save(reservation);
 
         verify(inventory).markHeld(FIXED_NOW);
-        assertThat(result.getExpiresAt()).isEqualTo(FIXED_NOW.plus(Reservation.HELD_TTL));
+        assertThat(reservation.getExpiresAt()).isEqualTo(FIXED_NOW.plus(Reservation.HELD_TTL));
     }
 
     @Test
-    void bookSeat_선점_실패시_null_반환하고_부작용_없음() {
+    void bookSeat_선점_실패시_SeatTaken_반환하고_부작용_없음() {
         when(preemption.tryPreemptSeat(SCHEDULE_ID, SEAT_INVENTORY_ID)).thenReturn(false);
 
-        assertThat(bookingService.bookSeat(USER_ID, SCHEDULE_ID, SEAT_INVENTORY_ID)).isNull();
+        assertThat(bookingService.bookSeat(USER_ID, SCHEDULE_ID, SEAT_INVENTORY_ID))
+                .isInstanceOf(BookingResult.SeatTaken.class);
         verifyNoInteractions(reservationRepository, seatInventoryRepository, userRepository);
     }
 
     @Test
-    void bookAuto_잔여석_없으면_null_반환하고_부작용_없음() {
+    void bookAuto_잔여석_없으면_SoldOut_반환하고_부작용_없음() {
         when(preemption.popAnySeat(SCHEDULE_ID)).thenReturn(null);
 
-        assertThat(bookingService.bookAuto(USER_ID, SCHEDULE_ID)).isNull();
+        assertThat(bookingService.bookAuto(USER_ID, SCHEDULE_ID))
+                .isInstanceOf(BookingResult.SoldOut.class);
         verifyNoInteractions(reservationRepository, seatInventoryRepository, userRepository);
     }
 

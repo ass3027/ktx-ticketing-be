@@ -2,10 +2,7 @@ package com.ktx.ticketing.booking;
 
 import com.ktx.ticketing.domain.Reservation;
 import lombok.RequiredArgsConstructor;
-import org.redisson.api.RLock;
-import org.redisson.api.RedissonClient;
 import com.ktx.ticketing.infra.DistributedLock;
-import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Service;
 
 /**
@@ -22,19 +19,22 @@ public class LockBookingService {
 
     /**
      * SEAT 모드: 스케줄 단위 락 획득 후 지정 좌석 HELD 전이.
-     * @return Reservation, 락 획득 실패 또는 좌석 이미 점유 시 null
+     * @return 성공 시 {@link BookingResult.Success}, 락 미획득 또는 좌석 이미 점유 시 {@link BookingResult.SeatTaken}
      */
-    public @Nullable Reservation bookSeat(Long userId, Long scheduleId, Long seatInventoryId) {
-        return lock.executeWithLock("schedule:" + scheduleId,
+    public BookingResult bookSeat(Long userId, Long scheduleId, Long seatInventoryId) {
+        Reservation reservation = lock.executeWithLock("schedule:" + scheduleId,
                 () -> txHelper.holdSeat(userId, seatInventoryId));
+        return reservation != null ? new BookingResult.Success(reservation) : new BookingResult.SeatTaken();
     }
 
     /**
      * AUTO 모드: 스케줄 단위 락 획득 후 AVAILABLE 좌석 1개 조회 → HELD 전이.
-     * @return Reservation, 락 획득 실패 또는 잔여석 없으면 null
+     * @return 성공 시 {@link BookingResult.Success}, 잔여석 없으면 {@link BookingResult.SoldOut}
+     *         (락 미획득도 배정 불가로 보아 동일 처리 — 재시도 대상)
      */
-    public @Nullable Reservation bookAuto(Long userId, Long scheduleId) {
-        return lock.executeWithLock("schedule:" + scheduleId,
+    public BookingResult bookAuto(Long userId, Long scheduleId) {
+        Reservation reservation = lock.executeWithLock("schedule:" + scheduleId,
                 () -> txHelper.holdAnySeat(userId, scheduleId));
+        return reservation != null ? new BookingResult.Success(reservation) : new BookingResult.SoldOut();
     }
 }

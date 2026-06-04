@@ -1,7 +1,6 @@
 package com.ktx.ticketing.booking;
 
 import com.ktx.ticketing.domain.*;
-import org.jspecify.annotations.Nullable;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,27 +23,27 @@ public class BookingService {
 
     /**
      * SEAT 모드: 특정 좌석 직접 선택 예매.
-     * @return 생성된 Reservation, 선점 실패 시 null
+     * @return 성공 시 {@link BookingResult.Success}, 선점 패배 시 {@link BookingResult.SeatTaken}
      */
     @Transactional
-    public @Nullable Reservation bookSeat(Long userId, Long scheduleId, Long seatInventoryId) {
+    public BookingResult bookSeat(Long userId, Long scheduleId, Long seatInventoryId) {
         if (!preemption.tryPreemptSeat(scheduleId, seatInventoryId)) {
-            return null; // 이미 다른 요청이 선점
+            return new BookingResult.SeatTaken(); // 이미 다른 요청이 선점
         }
-        return doHold(userId, seatInventoryId);
+        return new BookingResult.Success(doHold(userId, seatInventoryId));
     }
 
     /**
      * AUTO 모드: 자동 배정 예매.
-     * @return 생성된 Reservation, 잔여석 없으면 null
+     * @return 성공 시 {@link BookingResult.Success}, 잔여석 없으면 {@link BookingResult.SoldOut}
      */
     @Transactional
-    public @Nullable Reservation bookAuto(Long userId, Long scheduleId) {
+    public BookingResult bookAuto(Long userId, Long scheduleId) {
         Long seatInventoryId = preemption.popAnySeat(scheduleId);
         if (seatInventoryId == null) {
-            return null; // 잔여석 없음
+            return new BookingResult.SoldOut(); // 잔여석 없음
         }
-        return doHold(userId, seatInventoryId);
+        return new BookingResult.Success(doHold(userId, seatInventoryId));
     }
 
     private Reservation doHold(Long userId, Long seatInventoryId) {
