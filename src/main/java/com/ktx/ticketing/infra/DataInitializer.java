@@ -21,6 +21,7 @@ public class DataInitializer implements ApplicationRunner {
     private final JdbcTemplate jdbc;
 
     private static final int BATCH_SIZE = 1000;
+    private static final int INVENTORY_BATCH_SIZE = 5000;
     private static final int TOTAL_CARS = 20;
     private static final int SEATS_PER_CAR = 50;
     private static final int TOTAL_SCHEDULES = 50;
@@ -89,11 +90,11 @@ public class DataInitializer implements ApplicationRunner {
         List<Long> scheduleIds = jdbc.queryForList(
             "SELECT id FROM schedule WHERE train_id = ? ORDER BY id", Long.class, trainId);
 
-        List<Object[]> batch = new ArrayList<>(BATCH_SIZE);
+        List<Object[]> batch = new ArrayList<>(INVENTORY_BATCH_SIZE);
         for (Long schedId : scheduleIds) {
             for (Long seatId : seatIds) {
                 batch.add(new Object[]{schedId, seatId, "AVAILABLE", 0});
-                if (batch.size() == BATCH_SIZE) {
+                if (batch.size() == INVENTORY_BATCH_SIZE) {
                     jdbc.batchUpdate(
                         "INSERT INTO seat_inventory(schedule_id, seat_id, status, version) VALUES (?,?,?,?)", batch);
                     batch.clear();
@@ -107,16 +108,17 @@ public class DataInitializer implements ApplicationRunner {
     }
 
     private void seedUsers() {
+        LocalDateTime now = LocalDateTime.now();
         List<Object[]> batch = new ArrayList<>(BATCH_SIZE);
         for (int i = 1; i <= TOTAL_USERS; i++) {
-            batch.add(new Object[]{"user" + i + "@ktx.test", "사용자" + i});
+            batch.add(new Object[]{"user" + i + "@ktx.test", "사용자" + i, now});
             if (batch.size() == BATCH_SIZE) {
-                jdbc.batchUpdate("INSERT INTO users(email, name, created_at) VALUES (?,?, NOW())", batch);
+                jdbc.batchUpdate("INSERT INTO users(email, name, created_at) VALUES (?,?,?)", batch);
                 batch.clear();
             }
         }
         if (!batch.isEmpty()) {
-            jdbc.batchUpdate("INSERT INTO users(email, name, created_at) VALUES (?,?, NOW())", batch);
+            jdbc.batchUpdate("INSERT INTO users(email, name, created_at) VALUES (?,?,?)", batch);
         }
     }
 }
