@@ -6,11 +6,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Queue;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -36,7 +39,7 @@ class ConcurrencyPocTest {
 
     @Autowired BookingService bookingService;
     @Autowired LockBookingService lockBookingService;
-    @Autowired SeatPreemptionService preemptionService;
+    @Autowired SeatPreemption preemptionService;
     @Autowired SeatInventoryRepository seatInventoryRepository;
     @Autowired ReservationRepository reservationRepository;
     @Autowired StringRedisTemplate redis;
@@ -50,7 +53,7 @@ class ConcurrencyPocTest {
         seatInventoryRepository.save(inv);
 
         // Redis: avail Set에 대상 좌석 1개만 세팅
-        preemptionService.initAvailSet(SCHEDULE_ID, List.of(SEAT_INVENTORY_ID));
+        preemptionService.initInventory(SCHEDULE_ID, List.of(SEAT_INVENTORY_ID));
 
         // 기존 예약 삭제
         reservationRepository.deleteAll(
@@ -65,18 +68,14 @@ class ConcurrencyPocTest {
     void redisPreemption_동시_1000요청_oversell_0() throws InterruptedException {
         AtomicInteger successCount = new AtomicInteger();
         AtomicInteger failCount = new AtomicInteger();
+        Queue<Throwable> unexpected = new ConcurrentLinkedQueue<>();
 
         runConcurrently(THREAD_COUNT, userId ->
                 bookingService.bookSeat(userId, SCHEDULE_ID, SEAT_INVENTORY_ID),
-                successCount, failCount
+                successCount, failCount, unexpected
         );
 
-        assertThat(successCount.get()).isEqualTo(1);
-        assertThat(failCount.get()).isEqualTo(THREAD_COUNT - 1);
-
-        long heldOrSoldCount = seatInventoryRepository.countByScheduleIdAndStatus(SCHEDULE_ID, SeatStatus.HELD)
-                + seatInventoryRepository.countByScheduleIdAndStatus(SCHEDULE_ID, SeatStatus.SOLD);
-        assertThat(heldOrSoldCount).isEqualTo(1);
+        assertExactlyOneWon(successCount, failCount, unexpected);
     }
 
     @Test
@@ -84,18 +83,37 @@ class ConcurrencyPocTest {
     void redissonLock_동시_1000요청_oversell_0() throws InterruptedException {
         AtomicInteger successCount = new AtomicInteger();
         AtomicInteger failCount = new AtomicInteger();
+        Queue<Throwable> unexpected = new ConcurrentLinkedQueue<>();
 
         runConcurrently(THREAD_COUNT, userId ->
                 lockBookingService.bookSeat(userId, SCHEDULE_ID, SEAT_INVENTORY_ID),
-                successCount, failCount
+                successCount, failCount, unexpected
         );
 
+        assertExactlyOneWon(successCount, failCount, unexpected);
+    }
+
+    /**
+     * 정합성 목표 검증: oversell=0 그리고 중복 예약=0.
+     * 인메모리 카운터(success/fail)와 DB(SoT: 좌석 상태·예약 행)를 각각 교차검증한다.
+     */
+    private void assertExactlyOneWon(AtomicInteger successCount, AtomicInteger failCount,
+                                     Queue<Throwable> unexpected) {
+        assertThat(unexpected)
+                .as("경합 패배(낙관락/락획득 실패) 외의 예외는 없어야 한다")
+                .isEmpty();
         assertThat(successCount.get()).isEqualTo(1);
         assertThat(failCount.get()).isEqualTo(THREAD_COUNT - 1);
 
         long heldOrSoldCount = seatInventoryRepository.countByScheduleIdAndStatus(SCHEDULE_ID, SeatStatus.HELD)
                 + seatInventoryRepository.countByScheduleIdAndStatus(SCHEDULE_ID, SeatStatus.SOLD);
-        assertThat(heldOrSoldCount).isEqualTo(1);
+        assertThat(heldOrSoldCount)
+                .as("좌석 점유는 정확히 1건 (oversell=0)")
+                .isEqualTo(1);
+
+        assertThat(reservationRepository.countBySeatInventoryId(SEAT_INVENTORY_ID))
+                .as("동일 좌석 예약은 정확히 1건 (중복 예약=0)")
+                .isEqualTo(1);
     }
 
     @FunctionalInterface
@@ -104,7 +122,8 @@ class ConcurrencyPocTest {
     }
 
     private void runConcurrently(int threadCount, BookingAction action,
-                                  AtomicInteger successCount, AtomicInteger failCount)
+                                  AtomicInteger successCount, AtomicInteger failCount,
+                                  Queue<Throwable> unexpected)
             throws InterruptedException {
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);
         CountDownLatch ready = new CountDownLatch(threadCount);
@@ -124,7 +143,10 @@ class ConcurrencyPocTest {
                     } else {
                         failCount.incrementAndGet();
                     }
-                } catch (Exception e) {
+                } catch (OptimisticLockingFailureException | CannotAcquireLockException e) {
+                    failCount.incrementAndGet(); // 경합 패배 — 정상 실패 경로
+                } catch (Throwable t) {
+                    unexpected.add(t);           // 경합과 무관한 진짜 이상 — 별도 수집
                     failCount.incrementAndGet();
                 } finally {
                     done.countDown();
@@ -134,7 +156,15 @@ class ConcurrencyPocTest {
 
         ready.await(); // 모든 스레드 준비 완료 대기
         start.countDown(); // 동시 출발
-        done.await(30, TimeUnit.SECONDS);
-        executor.shutdown();
+        boolean finished = done.await(30, TimeUnit.SECONDS);
+        executor.shutdownNow(); // shutdown은 진행 중 작업을 끊지 않으므로 미완료 시 강제 종료
+
+        // 모든 참가자가 끝나야 결과가 유효하다 — 타임아웃은 명확한 실패로 처리
+        assertThat(finished)
+                .as("1,000개 요청이 30초 내 모두 완료되어야 결과가 유효하다")
+                .isTrue();
+        assertThat(successCount.get() + failCount.get())
+                .as("전수 집계 — 누락된 요청이 없어야 한다")
+                .isEqualTo(threadCount);
     }
 }

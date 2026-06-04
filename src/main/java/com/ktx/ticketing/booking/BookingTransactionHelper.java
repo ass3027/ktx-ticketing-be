@@ -1,10 +1,12 @@
 package com.ktx.ticketing.booking;
 
 import com.ktx.ticketing.domain.*;
+import org.jspecify.annotations.Nullable;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -20,7 +22,7 @@ public class BookingTransactionHelper {
     private final UserRepository userRepository;
 
     @Transactional
-    public Reservation holdSeat(Long userId, Long seatInventoryId) {
+    public @Nullable Reservation holdSeat(Long userId, Long seatInventoryId) {
         SeatInventory inventory = seatInventoryRepository.findById(seatInventoryId)
                 .orElseThrow(() -> new IllegalStateException("SeatInventory not found: " + seatInventoryId));
 
@@ -31,18 +33,23 @@ public class BookingTransactionHelper {
         User user = userRepository.getReferenceById(userId);
         inventory.hold();
         Reservation reservation = Reservation.hold(user, inventory);
+        inventory.hold(LocalDateTime.now().plusMinutes(BookingService.HELD_TTL_MINUTES));
+        Reservation reservation = Reservation.hold(user, inventory, BookingService.HELD_TTL_MINUTES);
         reservationRepository.save(reservation);
         return reservation;
     }
 
     @Transactional
-    public Reservation holdAnySeat(Long userId, Long scheduleId) {
+    public @Nullable Reservation holdAnySeat(Long userId, Long scheduleId) {
         List<SeatInventory> available = seatInventoryRepository.findAvailableByScheduleId(scheduleId);
         if (available.isEmpty()) {
             return null;
         }
 
         User user = userRepository.getReferenceById(userId);
+        SeatInventory inventory = available.getFirst();
+        inventory.hold(LocalDateTime.now().plusMinutes(BookingService.HELD_TTL_MINUTES));
+        Reservation reservation = Reservation.hold(user, inventory, BookingService.HELD_TTL_MINUTES);
         SeatInventory inventory = available.get(0);
         inventory.hold();
         Reservation reservation = Reservation.hold(user, inventory);

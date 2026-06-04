@@ -1,56 +1,71 @@
 package com.ktx.ticketing.booking;
 
-import org.junit.jupiter.api.BeforeEach;
+import com.ktx.ticketing.domain.Reservation;
+import com.ktx.ticketing.infra.DistributedLock;
 import org.junit.jupiter.api.Test;
-import org.redisson.api.RLock;
-import org.redisson.api.RedissonClient;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
+/**
+ * LockBookingService 는 Redisson 을 직접 다루지 않고 {@link DistributedLock} 에 위임한다.
+ * 따라서 이 단위 테스트는 락 생명주기가 아니라 "스케줄 단위 키로 위임하고, 락 보호 구간에서
+ * 올바른 txHelper 메서드를 호출해 그 결과를 그대로 반환하는가" 만 검증한다.
+ * (락 획득/해제/인터럽트 동작은 RedissonDistributedLockTest 의 책임)
+ */
+@ExtendWith(MockitoExtension.class)
 class LockBookingServiceTest {
 
-    private RedissonClient redisson;
-    private RLock lock;
-    private LockBookingService service;
+    @Mock private DistributedLock lock;
+    @Mock private BookingTransactionHelper txHelper;
+    @InjectMocks private LockBookingService service;
 
-    @BeforeEach
-    void setUp() {
-        redisson = mock(RedissonClient.class);
-        lock = mock(RLock.class);
-        when(redisson.getLock(anyString())).thenReturn(lock);
-
-        service = new LockBookingService(redisson, mock(BookingTransactionHelper.class));
+    /** 락 획득 성공을 모사: 전달된 action 을 실제로 실행해 그 결과를 돌려준다. */
+    private void simulateLockAcquired() {
+        when(lock.executeWithLock(anyString(), any()))
+                .thenAnswer(inv -> inv.<Supplier<?>>getArgument(1).get());
     }
 
     @Test
-    void bookSeat_락_획득_실패시_null_반환() throws InterruptedException {
-        when(lock.tryLock(anyLong(), anyLong(), any(TimeUnit.class))).thenReturn(false);
+    void bookSeat_스케줄_락_키로_위임하고_지정좌석_점유결과를_반환() {
+        Reservation expected = mock(Reservation.class);
+        when(txHelper.holdSeat(1L, 42L)).thenReturn(expected);
+        simulateLockAcquired();
 
-        var result = service.bookSeat(1L, 1L, 42L);
+        var result = service.bookSeat(1L, 7L, 42L);
+
+        assertThat(result).isSameAs(expected);
+        verify(lock).executeWithLock(eq("schedule:7"), any());
+    }
+
+    @Test
+    void bookAuto_스케줄_락_키로_위임하고_자동배정_결과를_반환() {
+        Reservation expected = mock(Reservation.class);
+        when(txHelper.holdAnySeat(1L, 7L)).thenReturn(expected);
+        simulateLockAcquired();
+
+        var result = service.bookAuto(1L, 7L);
+
+        assertThat(result).isSameAs(expected);
+        verify(lock).executeWithLock(eq("schedule:7"), any());
+    }
+
+    @Test
+    void bookSeat_락_미획득시_좌석점유를_시도하지_않고_null_반환() {
+        // executeWithLock 이 (락 미획득을 모사하여) action 을 실행하지 않고 null 반환
+        when(lock.executeWithLock(anyString(), any())).thenReturn(null);
+
+        var result = service.bookSeat(1L, 7L, 42L);
 
         assertThat(result).isNull();
-    }
-
-    @Test
-    void bookAuto_락_획득_실패시_null_반환() throws InterruptedException {
-        when(lock.tryLock(anyLong(), anyLong(), any(TimeUnit.class))).thenReturn(false);
-
-        var result = service.bookAuto(1L, 1L);
-
-        assertThat(result).isNull();
-    }
-
-    @Test
-    void bookSeat_락_획득_실패시_unlock_호출_안함() throws InterruptedException {
-        when(lock.tryLock(anyLong(), anyLong(), any(TimeUnit.class))).thenReturn(false);
-        when(lock.isHeldByCurrentThread()).thenReturn(false);
-
-        service.bookSeat(1L, 1L, 42L);
-
-        verify(lock, never()).unlock();
+        verifyNoInteractions(txHelper);
     }
 }

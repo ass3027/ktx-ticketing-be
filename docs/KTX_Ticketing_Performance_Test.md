@@ -157,6 +157,7 @@ export default function () {
 | **E2 입장 제어** | 제어 off | 활성자 상한 K on | 5xx율·p99 폭증 → 안정화 |
 | **E3 조회 캐시** | 매 요청 DB 집계 | Redis 카운터/캐시 | 조회 p95↓, DB CPU↓ |
 | (E4 선택) A vs B | Redis 동기 | MQ 비동기 | 처리량/지연/정합성 비교 |
+| **E5 가상 스레드** | 플랫폼 스레드(`virtual.enabled=false`) | 가상 스레드 on | 동일 부하(L2)에서 처리량↑·p95/p99↓, 스레드 점유·풀 포화 비교 |
 
 > 각 실험: **동일 부하 프로파일**로 Before/After만 바꿔 측정 → 차이를 그래프 1장 + 한 줄 해석.
 
