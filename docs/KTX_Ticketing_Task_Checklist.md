@@ -47,7 +47,7 @@
 ## P3. 기능 구현 → 🏁 M3
 ### ① 조회/입장
 - [x] **T3-1** 운행 리스트 조회 API → `GET /api/schedules` 커서 페이징(`from`+`afterId`, limit 기본 8/최대 100). `schedule` 패키지. 잔여석/매진은 T3-2.
-- [ ] **T3-2** 매진/잔여석 표시 (Redis 카운터/캐시, 약한 일관성)
+- [x] **T3-2** 매진/잔여석 표시 (Redis 카운터/캐시, 약한 일관성) → 잔여석 = `avail:` Set 크기(SCARD) **단일 소스** 재사용(별도 `remain:` 미도입). `ScheduleResponse.remainingSeats/soldOut`. SCARD 직렬 루프(파이프라인/캐시는 E3 측정 후).
 - [ ] **T3-3** 입장 제어: 활성자 카운터(상한 K)
 - [ ] **T3-4** 초과 시 429/503 + Retry-After
 - [ ] **T3-5** EntryToken 발급/만료/검증

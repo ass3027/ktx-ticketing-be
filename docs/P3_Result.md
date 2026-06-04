@@ -12,7 +12,7 @@
 |--------|------|------|
 | T3-5b 예매 결과 반환 타입 결정 | ✅ | sealed `BookingResult` 채택 |
 | T3-1 운행 리스트 조회 API | ✅ | `GET /api/schedules` 커서 페이징, `schedule` 패키지 |
-| T3-2 매진/잔여석 표시 | ⬜ | |
+| T3-2 매진/잔여석 표시 | ✅ | `avail:` SCARD 단일 소스, `remainingSeats`/`soldOut` |
 | T3-3 입장 제어(상한 K) | ⬜ | |
 | T3-4 초과 시 429/503 + Retry-After | ⬜ | |
 | T3-5 EntryToken 발급/만료/검증 | ⬜ | |
@@ -132,3 +132,42 @@ GET /api/schedules?dep=서울&arr=부산&from=2026-07-01T09:00&afterId=7&limit=8
 - `compileJava` ✅
 - `ScheduleQueryServiceTest` 8건 ✅
 - 전체 테스트 ✅ — 회귀 없음(`ConcurrencyPocTest` 포함, 45s)
+
+---
+
+## T3-2 — 매진/잔여석 표시 (2026-06-04)
+
+### 결정
+운행편 응답에 `remainingSeats`/`soldOut` 추가. 잔여석 소스는 **`avail:` Set 크기(SCARD) 단일 소스** 재사용 — 별도 `remain:` String 카운터는 도입하지 않음.
+
+| 비교 | 채택 (A: SCARD 재사용) | 기각 (B: `remain:` 별도 카운터) |
+|------|------------------------|--------------------------------|
+| 소스 수 | **단일** — `avail:` Set이 이미 단일 선점 지점, 그 크기가 곧 잔여 | 이중 — Set + String 둘 다 갱신 필요 |
+| 동기화 | 선점(SREM/SPOP)·반환(SADD)이 곧 잔여 갱신, 추가 작업 0 | 예매/취소/만료마다 Set·String 동시 갱신, 어긋나면 reconcile 부담 2배 |
+| 성능 | SCARD O(1) | DECR/INCR 미세 우위뿐 |
+
+→ `remain:`(P1 설계 안)은 정합성 위험 대비 이득이 약해 기각. 그 정당성은 E3(T4-3) 측정으로 따진다.
+
+### 매진 정의
+`soldOut = (remainingSeats == 0)`. 매진은 **보수적**으로 — 선점 즉시 Set에서 빠지므로 SCARD가 0을 곧바로 반영, false "available" 위험 낮음. "잔여 1석" 보고 들어가 매진은 정상(표시는 안내, 최종 판정은 예매 임계영역).
+
+### 변경 범위
+| 파일 | 변경 |
+|------|------|
+| `schedule/ScheduleResponse.java` | `remainingSeats`/`soldOut` 필드 추가, `from(Schedule, long)` 로 시그니처 변경 |
+| `schedule/ScheduleQueryService.java` | `SeatPreemption` 주입, 각 편에 `availableCount(scheduleId)` 덧입힘 |
+
+### 설계 판단
+- **패키지 의존 방향**: `schedule` → `booking.SeatPreemption`(SPI 인터페이스, 읽기용 `availableCount` 포함). 단방향이라 순환 없음.
+- **SCARD 직렬 루프**: 페이지당 최대 limit(≤100)회. 기본 8건이라 단건 조회 영향 미미. **파이프라인/캐시는 측정 후 E3(T4-3) Before/After 산출물로 미룸** — 조기 최적화 회피 + 측정 기회 보존. 코드에 의도 주석 명시.
+- **읽기 전용**: 카운터 갱신(SREM/SADD)은 `RedisSetPreemption`에 이미 존재. T3-2는 표시만.
+
+### 테스트 (`ScheduleQueryServiceTest` 확장, +2건 → 총 10건)
+- 각 운행편 잔여석을 `availableCount(id)` 결과로 채우는지
+- 잔여 0 → `soldOut=true`, 그 외 → false
+- 기존 페이징 경계 테스트는 잔여석 무관 → `SeatPreemption` lenient 기본 stub(0)
+
+### 검증 결과
+- `compileJava` ✅
+- `ScheduleQueryServiceTest` 10건 ✅
+- 전체 테스트 ✅ — 회귀 없음(48s)

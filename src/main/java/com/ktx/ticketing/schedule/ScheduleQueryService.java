@@ -1,5 +1,6 @@
 package com.ktx.ticketing.schedule;
 
+import com.ktx.ticketing.booking.SeatPreemption;
 import com.ktx.ticketing.domain.Schedule;
 import com.ktx.ticketing.domain.ScheduleRepository;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +26,7 @@ public class ScheduleQueryService {
     static final long FIRST_PAGE_AFTER_ID = 0L;
 
     private final ScheduleRepository scheduleRepository;
+    private final SeatPreemption preemption;
 
     @Transactional(readOnly = true)
     public ScheduleListResponse search(String dep, String arr, LocalDateTime from,
@@ -35,7 +37,11 @@ public class ScheduleQueryService {
         List<Schedule> page = scheduleRepository.findPageAfter(
                 dep, arr, from, cursorId, PageRequest.of(0, pageSize));
 
-        List<ScheduleResponse> items = page.stream().map(ScheduleResponse::from).toList();
+        // 각 편의 잔여석은 avail: Set 크기(SCARD) 단일 소스에서 가져온다(약한 일관성).
+        // 페이지당 최대 limit(≤100)회 SCARD — 직렬 왕복. 파이프라인/캐시 최적화는 측정 후 E3(T4-3)에서.
+        List<ScheduleResponse> items = page.stream()
+                .map(s -> ScheduleResponse.from(s, preemption.availableCount(s.getId())))
+                .toList();
         return new ScheduleListResponse(items, nextCursor(page, pageSize));
     }
 

@@ -1,5 +1,6 @@
 package com.ktx.ticketing.schedule;
 
+import com.ktx.ticketing.booking.SeatPreemption;
 import com.ktx.ticketing.domain.Schedule;
 import com.ktx.ticketing.domain.ScheduleRepository;
 import com.ktx.ticketing.domain.Train;
@@ -15,7 +16,9 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -31,9 +34,13 @@ class ScheduleQueryServiceTest {
     private static final LocalDateTime FROM = LocalDateTime.of(2026, 7, 1, 9, 0);
 
     @Mock ScheduleRepository scheduleRepository;
+    @Mock SeatPreemption preemption;
 
     private ScheduleQueryService service() {
-        return new ScheduleQueryService(scheduleRepository);
+        // 페이징 경계 테스트는 잔여석 값에 무관하므로 기본 0 으로 lenient stub.
+        // 잔여석/매진 매핑 테스트는 각자 명시적으로 재stub 한다.
+        lenient().when(preemption.availableCount(anyLong())).thenReturn(0L);
+        return new ScheduleQueryService(scheduleRepository, preemption);
     }
 
     /**
@@ -141,6 +148,40 @@ class ScheduleQueryServiceTest {
 
         assertThat(result.items()).isEmpty();
         assertThat(result.nextCursor()).isNull();
+    }
+
+    @Test
+    void 각_운행편의_잔여석을_avail_Set_크기로_채운다() {
+        Schedule a = scheduleOf(1L, FROM);
+        Schedule b = scheduleOf(2L, FROM.plusHours(1));
+        stubRepositoryReturns(List.of(a, b));
+        ScheduleQueryService service = service(); // 기본 stub(0) 을 먼저 깔고
+        when(preemption.availableCount(1L)).thenReturn(42L); // 운행편별로 덮어쓴다(구체 매처가 우선)
+        when(preemption.availableCount(2L)).thenReturn(7L);
+
+        var result = service.search(DEP, ARR, FROM, null, 8);
+
+        assertThat(result.items()).extracting(ScheduleResponse::scheduleId, ScheduleResponse::remainingSeats)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple(1L, 42L),
+                        org.assertj.core.groups.Tuple.tuple(2L, 7L));
+    }
+
+    @Test
+    void 잔여석_0이면_매진_그_외엔_매진_아님() {
+        Schedule soldOut = scheduleOf(1L, FROM);
+        Schedule available = scheduleOf(2L, FROM.plusHours(1));
+        stubRepositoryReturns(List.of(soldOut, available));
+        ScheduleQueryService service = service();
+        when(preemption.availableCount(1L)).thenReturn(0L);
+        when(preemption.availableCount(2L)).thenReturn(1L);
+
+        var result = service.search(DEP, ARR, FROM, null, 8);
+
+        assertThat(result.items()).extracting(ScheduleResponse::scheduleId, ScheduleResponse::soldOut)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple(1L, true),
+                        org.assertj.core.groups.Tuple.tuple(2L, false));
     }
 
     private Pageable capturedPageable() {
