@@ -19,8 +19,8 @@
 | T3-6 예매 API `mode=SEAT` | ✅ | `POST /api/reservations`, SREM 선점, 신뢰 경계 |
 | T3-7 예매 API `mode=AUTO` | ✅ | 동일 엔드포인트 mode 분기, SPOP 자동배정 |
 | T3-8 결제 확정/취소 + 카운터 동기화 | ✅ | 커밋 후 부수효과, 상태머신 가드, `ReservationController` |
-| T3-9 HELD TTL 만료 스케줄러 | ⬜ | |
-| T3-9b 시간 소스(Clock) 단일화 | ⬜ | |
+| T3-9 HELD TTL 만료 스케줄러 | ✅ | sweep 건별 트랜잭션, 커밋 후 SADD+DECR |
+| T3-9b 시간 소스(Clock) 단일화 | ✅ | confirm/cancel/expire `now(clock)` |
 | T3-10 Redis-DB reconcile 잡 | ⬜ | |
 | T3-11 통합 테스트(정합성 자동화) | ⬜ | |
 
@@ -337,3 +337,47 @@ POST /api/reservations   header: X-Entry-Token: {token}   body: { mode, seatInve
 - `compileJava`/`compileTestJava` ✅
 - 신규/확장 테스트 28건 ✅
 - 전체 단위 테스트 ✅ — `ConcurrencyPocTest` 만 Docker 데몬 미기동(Testcontainers) 환경 사유로 제외 (80/81)
+
+---
+
+## T3-9 / T3-9b — HELD TTL 만료 스케줄러 + Clock 단일화 (2026-06-08)
+
+### 결정
+미결제로 만료된 HELD 예약을 주기 sweep 으로 복구(워크플로우 3.3). 취소(T3-8)와 동일한 "커밋 후 부수효과" 정합성 패턴을, **사용자 요청이 아니라 스케줄러가 시간 기반으로** 트리거. 선행으로 시각 소스를 `Clock` 으로 단일화(T3-9b).
+
+| 결정 | 채택 | 근거 |
+|------|------|------|
+| **Clock 단일화(T3-9b)** | `Reservation.confirm/cancel/expire` → `now(clock)` (`hold` 패턴) | 만료 판정 `expiresAt < now` 가 결정적이어야 테스트 가능. `LocalDateTime.now()` 직접 호출 제거 |
+| **건별 독립 트랜잭션** | sweep 이 id 목록을 받아 건당 `expire(id)` 트랜잭션 | 한 건 실패가 배치 전체를 막지 않음(robustness). 커밋 후 Redis per item |
+| **커밋 후·실제 만료 시에만 부수효과** | 헬퍼가 전이 시에만 `ExpiredRelease` 반환, null=no-op | 롤백 시 조기 해제(오버셀) 방지 + 경합 흡수로 이중 SADD/DECR 차단 |
+| **경합 처리** | 조회~전이 사이 사용자 confirm/cancel → 트랜잭션 내 상태 재확인(HELD?) + `@Version` | 한쪽만 성공, 진 쪽 no-op. 분산 다중 스위퍼도 정합성 보존 → **분산락 불필요**(중복 작업만 낭비) |
+| **배치 상한** | `findExpiredHeldIds(now, Pageable)` batchSize | 긴 트랜잭션·부하 스파이크 방지. 밀린 만료는 다음 sweep |
+| **스케줄 주기** | `@Scheduled(fixedDelayString)` 30s, 외부화 | HELD TTL(5분)보다 짧게 둬 신속 회수. fixedDelay 라 직전 sweep 완료 후 간격 |
+
+### 변경 범위
+| 파일 | 변경 |
+|------|------|
+| `domain/Reservation.java` | confirm/cancel/expire 에 `Clock` 도입 + `expire()` HELD 가드(전이 가드 셋 완성) |
+| `booking/ReservationLifecycleTransactionHelper.java` | `Clock` 주입, `expire(id)` + `ExpiredRelease` 추가 |
+| `domain/ReservationRepository.java` | `findExpiredHeldIds(now, Pageable)` |
+| `booking/HeldExpiryService.java` | **신규** — sweep 오케스트레이터 |
+| `booking/HeldExpiryScheduler.java` | **신규** — `@Scheduled` 위임 |
+| `booking/ExpiryProperties.java` | **신규** — `batch-size` |
+| `KtxTicketingApplication.java`·`application.yml` | `@EnableScheduling` + `expiry.{batch-size,sweep-interval}` |
+
+### 설계 판단 / 한계
+- **`SeatInventory`·`BookingTransactionHelper` 무변경**: 전자는 이미 시각 주입식(`markHeld`), 후자는 이미 `Clock` 보유(hold 경로).
+- **스케줄러 단위 테스트 생략**: 타이머 위임 전용 — sweep 로직은 `HeldExpiryServiceTest`, `@Scheduled` 배선은 프레임워크+런타임 영역.
+- **버려진 세션 누수는 여기서 못 잡음**: 예약이 없는 활성자(토큰만 받고 미예매)는 만료 sweep 대상 아님 → T3-10 reconcile 몫.
+- **테스트 결정성**: HELD TTL 5분 ≫ sweep 주기라 자동화 테스트 중 만료 대상이 안 생겨 빈 sweep → 전역 `@EnableScheduling` 도 무해.
+
+### 테스트
+| 클래스 | 건수 | 검증 |
+|--------|------|------|
+| `ReservationTest` (T3-9b 강화) | +1, 단언 강화 | expire HELD 가드, confirm/cancel/expire 시각 `isEqualTo(고정)` |
+| `ReservationLifecycleTransactionHelperTest` | +3 | expire: HELD→복구+식별자 / 비-HELD null no-op / 없음 null. clock 인자 반영 |
+| `HeldExpiryServiceTest` | 3 | sweep: 만료건별 SADD+DECR / 경합 no-op skip / 대상 없음 무동작 |
+
+### 검증 결과
+- `compileJava`/`compileTestJava` ✅
+- 전체 87/88 ✅ — `ConcurrencyPocTest` 만 Docker 미기동 환경 사유 제외
