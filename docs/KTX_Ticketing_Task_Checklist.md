@@ -58,7 +58,6 @@
 - [x] **T3-8** 결제 확정(HELD→SOLD) + 취소 + 카운터/활성자 동기화 → `ReservationLifecycleService`(오케스트레이터)+`TransactionHelper` 분리. DB 전이는 트랜잭션 안, Redis 부수효과(좌석 SADD·활성 슬롯 DECR)는 **커밋 후·실제 전이 시에만** → 롤백 시 조기 해제(오버셀)·이중 취소/확정 흡수. `ReservationController` `POST /{id}/confirm`(200)·`DELETE /{id}`(204), 토큰 게이트+소유권 검증+성공 시 revoke. 상태머신 가드(Reservation/SeatInventory)로 불변식 차단. 분산락 없이 `@Version` 방어. (엣지: 동시 전이 `OptimisticLockException`→현재 500, 매핑은 T3-11서)
 - [x] **T3-9** HELD TTL 만료 스케줄러 → 좌석/카운터/`avail` 복구 → `HeldExpiryScheduler`(`@Scheduled`, 30s)→`HeldExpiryService.sweep`. `findExpiredHeldIds`(HELD+만료, batchSize bound) 건별 독립 트랜잭션으로 `expire`(상태 재확인→HELD→EXPIRED+좌석 AVAILABLE), 커밋 후 `returnSeat`(SADD)+`leave`(DECR)을 **실제 만료 시에만**. 경합(사용자 confirm/cancel)은 상태 재확인+`@Version`으로 흡수→분산락 불필요. T3-8과 동일 정합성 패턴.
 - [x] **T3-9b** 시간 소스 단일화 → `Reservation.confirm/cancel/expire`를 `now(clock)`로 통일(`hold`와 동일 패턴), `ReservationLifecycleTransactionHelper`에 `Clock` 주입. `SeatInventory`는 이미 시각 주입식(`markHeld`), `BookingTransactionHelper`도 이미 `Clock` 보유라 무변경. 효과: 만료 판정·타임스탬프 결정적 → `ReservationTest` 단언 `isNotNull`→`isEqualTo(고정시각)` 강화.
-- [ ] **T3-9c-opt** (follow-up, 측정 게이트) 만료 sweep 벌크 최적화 보류 — 현재 건당 1 SELECT(fetch join, N+1 해소)+2 UPDATE+건별 트랜잭션. **T4-8(L6 soak)에서 sweep 이 병목으로 측정되면** 조건부 벌크 UPDATE(`UPDATE … WHERE id=:id AND status='HELD' SET … version=version+1`, SELECT·엔티티 로드 0)로 전환 검토. 단 도메인 상태머신(`Reservation.expire()`) 우회 + `@Version` 수동 증가(사용자 confirm 경로와 lost-update→오버셀 방지)의 동시성 함정이 있어 **측정 근거가 있을 때만** 감수. T3-2 SCARD 루프(E3) 와 같은 "측정 후 최적화" 원칙.
 - [ ] **T3-10** Redis-DB reconcile 잡: 잔여/활성자 카운터·`avail` 드리프트 주기 보정 → DB(SoT)로 수렴
 - [ ] **T3-11** 통합 테스트(정합성 자동화): 중복/초과/만료복구 + reconcile 수렴 검증
 - **DoD(M3)**: 정상 16단계 E2E + 예외 6종 처리
@@ -80,6 +79,11 @@
 - [ ] **T4-12** 실험 E7: 선점 백엔드(in-memory 스토어) 비교 — **Redis Set** vs **Memcached**. `MemcachedPreemption` 을 `SeatPreemption` 인터페이스 구현체로 추가(spymemcached 등 클라이언트 + docker-compose memcached). Memcached는 Set·원자 SREM/SPOP가 없어 **SEAT 선점은 좌석별 키 `add`(존재 시 실패=원자 점유), AUTO는 Set 부재로 별도 인덱스/CAS 우회 필요** — 이 *부적합성 분석 자체가 기술선택 트레이드오프 근거*(C6). 동일 부하(L1)에서 **초과 판매 0건 전제**로 처리량·p95/p99·라운드트립을 Before/After + 그래프로 비교, README 기록.
   - 구현: `@ConditionalOnProperty(name="booking.preemption", havingValue=…)` 로 구현체 토글, 호출 측(`BookingService`) 무변경. (선점 추상화는 이미 `SeatPreemption`/`RedisSetPreemption` 으로 분리됨)
   - Valkey/KeyDB/Dragonfly 등 **Redis 와이어 호환** 스토어는 구현체 불필요 — `RedisSetPreemption` 그대로 두고 접속 엔드포인트만 교체해 부하·비용 벤치마크(코드 변경 0).
+- [ ] **T4-13** (선행: T4-8) 만료 sweep 벌크 UPDATE 최적화 — 건별 처리(현재 1 SELECT fetch join + 2 UPDATE + 건별 트랜잭션, **O(N) roundtrip**)를 배치 처리(**O(1)**)로 전환하고 Before/After 측정. "측정 후 최적화" 원칙(T3-2 SCARD·E3와 동일).
+  - **트리거 조건**: T4-8(L6 soak)에서 sweep 이 병목으로 측정될 때만 착수. 미측정 시 현 건별 설계(T3-9) 유지.
+  - **구현 범위**: ① 만료 대상 `(reservationId, seatInventoryId, scheduleId)` 매핑 1 SELECT → ② `UPDATE Reservation SET status=EXPIRED, version=version+1 WHERE status='HELD' AND expiresAt < :now` → ③ `UPDATE SeatInventory SET status=AVAILABLE WHERE ...` (≈ 3 roundtrip / O(1)). 토글로 건별/벌크 전환해 비교.
+  - **정합성 함정(반드시 처리)**: Redis 부수효과(`returnSeat` SADD·`leave` DECR)를 **UPDATE 전 SELECT 결과로 돌리면 안 됨** — SELECT~UPDATE 사이 사용자 confirm(HELD→SOLD)된 행은 `WHERE status='HELD'`로 UPDATE에선 빠지지만 SELECT엔 남아 SOLD 좌석을 가용 풀에 반환 = **오버셀**. 실제 EXPIRED 전이된 행만 부수효과 대상이 되도록 보장(전이 후 재조회 또는 잠금). 도메인 상태머신(`Reservation.expire()`) 우회 + `@Version` 수동 증가(사용자 confirm 경로 lost-update 방어)를 직접 재구축해야 함.
+  - **수용 기준**: sweep DB roundtrip 이 만료 건수와 무관(O(1)) + 오버셀 0(T3-11 정합성 테스트에 confirm-vs-sweep 경합 케이스 추가) + Before/After roundtrip·지연 수치/그래프 기록.
 - **DoD(M4)**: SLO 충족/미달 사유 + Before/After 그래프 + 임계점 수치
 
 ## P5. 비동기 사이드 (Could)
