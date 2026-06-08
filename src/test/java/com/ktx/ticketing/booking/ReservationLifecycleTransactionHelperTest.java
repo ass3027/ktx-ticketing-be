@@ -7,15 +7,19 @@ import com.ktx.ticketing.domain.ReservationStatus;
 import com.ktx.ticketing.domain.Schedule;
 import com.ktx.ticketing.domain.SeatInventory;
 import com.ktx.ticketing.domain.User;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -37,8 +41,16 @@ class ReservationLifecycleTransactionHelperTest {
     private static final long SCHEDULE_ID = 1L;
     private static final long SEAT_ID = 42L;
 
+    /** 전이 메서드가 now(clock) 로 타임스탬프를 찍으므로 고정 Clock 으로 결정성 확보(@InjectMocks 대신 수동 주입). */
+    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-07-01T08:00:00Z"), ZoneOffset.UTC);
+
     @Mock ReservationRepository reservationRepository;
-    @InjectMocks ReservationLifecycleTransactionHelper helper;
+    ReservationLifecycleTransactionHelper helper;
+
+    @BeforeEach
+    void setUp() {
+        helper = new ReservationLifecycleTransactionHelper(reservationRepository, CLOCK);
+    }
 
     /** OWNER_ID 소유의 예약 mock 을 findById 에 연결. 상태·좌석 그래프는 각 테스트가 필요한 만큼 덧붙인다. */
     private Reservation foundReservationOwnedBy(long ownerId) {
@@ -78,7 +90,7 @@ class ReservationLifecycleTransactionHelperTest {
         Outcome outcome = helper.confirm(RESERVATION_ID, OTHER_USER_ID);
 
         assertThat(outcome.result()).isInstanceOf(ReservationCommandResult.Forbidden.class);
-        verify(reservation, never()).confirm();
+        verify(reservation, never()).confirm(any());
         assertThat(outcome.leaveScheduleId()).isNull();
     }
 
@@ -90,7 +102,7 @@ class ReservationLifecycleTransactionHelperTest {
         Outcome outcome = helper.confirm(RESERVATION_ID, OWNER_ID);
 
         assertThat(outcome.result()).isInstanceOf(ReservationCommandResult.IllegalState.class);
-        verify(reservation, never()).confirm();
+        verify(reservation, never()).confirm(any());
     }
 
     @Test
@@ -102,7 +114,7 @@ class ReservationLifecycleTransactionHelperTest {
         Outcome outcome = helper.confirm(RESERVATION_ID, OWNER_ID);
 
         assertThat(outcome.result()).isInstanceOf(ReservationCommandResult.Success.class);
-        verify(reservation).confirm();
+        verify(reservation).confirm(CLOCK);
         verify(inventory).confirm();
         assertThat(outcome.leaveScheduleId()).isEqualTo(SCHEDULE_ID);
         assertThat(outcome.returnSeatId()).isNull(); // 확정 좌석은 가용 풀로 반환하지 않음
@@ -118,7 +130,7 @@ class ReservationLifecycleTransactionHelperTest {
         Outcome outcome = helper.cancel(RESERVATION_ID, OWNER_ID);
 
         assertThat(outcome.result()).isInstanceOf(ReservationCommandResult.Success.class);
-        verify(reservation, never()).cancel();
+        verify(reservation, never()).cancel(any());
         assertThat(outcome.leaveScheduleId()).isNull();
         assertThat(outcome.returnSeatId()).isNull();
     }
@@ -131,7 +143,7 @@ class ReservationLifecycleTransactionHelperTest {
         Outcome outcome = helper.cancel(RESERVATION_ID, OWNER_ID);
 
         assertThat(outcome.result()).isInstanceOf(ReservationCommandResult.IllegalState.class);
-        verify(reservation, never()).cancel();
+        verify(reservation, never()).cancel(any());
     }
 
     @Test
@@ -144,7 +156,7 @@ class ReservationLifecycleTransactionHelperTest {
         Outcome outcome = helper.cancel(RESERVATION_ID, OWNER_ID);
 
         assertThat(outcome.result()).isInstanceOf(ReservationCommandResult.Success.class);
-        verify(reservation).cancel();
+        verify(reservation).cancel(CLOCK);
         verify(inventory).release();
         assertThat(outcome.leaveScheduleId()).isEqualTo(SCHEDULE_ID);
         assertThat(outcome.returnSeatId()).isEqualTo(SEAT_ID); // 취소 좌석은 가용 풀로 반환
@@ -161,7 +173,7 @@ class ReservationLifecycleTransactionHelperTest {
         Outcome outcome = helper.cancel(RESERVATION_ID, OWNER_ID);
 
         assertThat(outcome.result()).isInstanceOf(ReservationCommandResult.Success.class);
-        verify(reservation).cancel();
+        verify(reservation).cancel(CLOCK);
         assertThat(outcome.returnSeatId()).isEqualTo(SEAT_ID);
     }
 }

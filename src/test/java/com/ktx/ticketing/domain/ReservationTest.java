@@ -44,12 +44,11 @@ class ReservationTest {
     void confirm_상태_CONFIRMED_및_confirmedAt_설정() {
         Reservation reservation = Reservation.hold(new User(), new SeatInventory(), fixedClock());
 
-        reservation.confirm();
+        reservation.confirm(fixedClock());
 
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
-        // confirm() 은 LocalDateTime.now() 를 직접 부르므로 정확값 단언 불가 → isNotNull 로 한정.
-        // T3-9b(Clock 단일화) 후 hold/markHeld 처럼 isEqualTo(고정시각) 으로 강화할 것.
-        assertThat(reservation.getConfirmedAt()).isNotNull();
+        // Clock 주입(T3-9b)으로 confirmedAt 을 정확값으로 단언 — now(clock) 사용 증명
+        assertThat(reservation.getConfirmedAt()).isEqualTo(FIXED_NOW);
         assertThat(reservation.getCancelledAt()).isNull();
     }
 
@@ -57,19 +56,19 @@ class ReservationTest {
     void cancel_상태_CANCELLED_및_cancelledAt_설정() {
         Reservation reservation = Reservation.hold(new User(), new SeatInventory(), fixedClock());
 
-        reservation.cancel();
+        reservation.cancel(fixedClock());
 
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
-        assertThat(reservation.getCancelledAt()).isNotNull();
+        assertThat(reservation.getCancelledAt()).isEqualTo(FIXED_NOW);
     }
 
     @Test
     void confirm_HELD가_아니면_예외_재확정_차단() {
         Reservation reservation = Reservation.hold(new User(), new SeatInventory(), fixedClock());
-        reservation.confirm(); // HELD → CONFIRMED
+        reservation.confirm(fixedClock()); // HELD → CONFIRMED
 
         // 이미 CONFIRMED 인 예약 재확정은 상태머신 불변식 위반
-        assertThatThrownBy(reservation::confirm).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> reservation.confirm(fixedClock())).isInstanceOf(IllegalStateException.class);
         // 거부 시 상태는 그대로 — 던지기 전에 부분 변이가 없어야 한다
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
     }
@@ -77,20 +76,20 @@ class ReservationTest {
     @Test
     void cancel_CONFIRMED에서도_가능_결제후_환불() {
         Reservation reservation = Reservation.hold(new User(), new SeatInventory(), fixedClock());
-        reservation.confirm();
+        reservation.confirm(fixedClock());
 
-        reservation.cancel(); // CONFIRMED → CANCELLED (환불 경로)
+        reservation.cancel(fixedClock()); // CONFIRMED → CANCELLED (환불 경로)
 
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
-        assertThat(reservation.getCancelledAt()).isNotNull();
+        assertThat(reservation.getCancelledAt()).isEqualTo(FIXED_NOW);
     }
 
     @Test
     void cancel_HELD_CONFIRMED가_아니면_예외() {
         Reservation reservation = Reservation.hold(new User(), new SeatInventory(), fixedClock());
-        reservation.expire(); // HELD → EXPIRED
+        reservation.expire(fixedClock()); // HELD → EXPIRED
 
-        assertThatThrownBy(reservation::cancel).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> reservation.cancel(fixedClock())).isInstanceOf(IllegalStateException.class);
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.EXPIRED); // 상태 유지
     }
 
@@ -98,9 +97,9 @@ class ReservationTest {
     void expire_상태_EXPIRED_및_cancelledAt_설정() {
         Reservation reservation = Reservation.hold(new User(), new SeatInventory(), fixedClock());
 
-        reservation.expire();
+        reservation.expire(fixedClock());
 
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.EXPIRED);
-        assertThat(reservation.getCancelledAt()).isNotNull();
+        assertThat(reservation.getCancelledAt()).isEqualTo(FIXED_NOW);
     }
 }

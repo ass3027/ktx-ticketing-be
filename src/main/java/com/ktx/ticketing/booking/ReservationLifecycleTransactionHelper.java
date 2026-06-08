@@ -9,6 +9,8 @@ import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
+
 /**
  * 확정/취소의 DB 상태 전이를 트랜잭션 안에서 수행하고, 커밋 후 Redis 부수효과에 필요한 식별자를 추출해 돌려준다.
  *
@@ -22,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class ReservationLifecycleTransactionHelper {
 
     private final ReservationRepository reservationRepository;
+    private final Clock clock;
 
     /**
      * 전이 결과 + 커밋 후 부수효과 대상 식별자.
@@ -54,8 +57,8 @@ public class ReservationLifecycleTransactionHelper {
         }
 
         SeatInventory inventory = reservation.getSeatInventory();
-        reservation.confirm(); // HELD → CONFIRMED
-        inventory.confirm();   // HELD → SOLD (@Version 이 동시 전이의 최종 방어선)
+        reservation.confirm(clock); // HELD → CONFIRMED
+        inventory.confirm();        // HELD → SOLD (@Version 이 동시 전이의 최종 방어선)
         return new Outcome(new ReservationCommandResult.Success(reservation),
                 inventory.getSchedule().getId(), null);
     }
@@ -80,8 +83,8 @@ public class ReservationLifecycleTransactionHelper {
         }
 
         SeatInventory inventory = reservation.getSeatInventory();
-        reservation.cancel();  // HELD/CONFIRMED → CANCELLED
-        inventory.release();   // → AVAILABLE
+        reservation.cancel(clock); // HELD/CONFIRMED → CANCELLED
+        inventory.release();       // → AVAILABLE
         return new Outcome(new ReservationCommandResult.Success(reservation),
                 inventory.getSchedule().getId(), inventory.getId());
     }

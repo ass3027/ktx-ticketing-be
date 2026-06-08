@@ -63,26 +63,29 @@ public class Reservation {
                 .build();
     }
 
-    /** HELD → CONFIRMED. 상태머신 불변식 — 확정은 HELD 에서만. 이미 확정/취소/만료된 예약 재확정 차단. */
-    public void confirm() {
+    /**
+     * HELD → CONFIRMED. 상태머신 불변식 — 확정은 HELD 에서만. 이미 확정/취소/만료된 예약 재확정 차단.
+     * 시각은 {@code hold} 와 동일하게 주입 {@link Clock} 에서 취해 결정적으로 단언 가능하게 한다.
+     */
+    public void confirm(Clock clock) {
         if (status != ReservationStatus.HELD) {
             throw new IllegalStateException("확정은 HELD 상태에서만 가능: " + status);
         }
         this.status = ReservationStatus.CONFIRMED;
-        this.confirmedAt = LocalDateTime.now();
+        this.confirmedAt = LocalDateTime.now(clock);
     }
 
     /** HELD/CONFIRMED → CANCELLED. 미결제 취소·결제 후 환불 모두 허용. 만료/기취소 예약 취소 차단. */
-    public void cancel() {
+    public void cancel(Clock clock) {
         if (status != ReservationStatus.HELD && status != ReservationStatus.CONFIRMED) {
             throw new IllegalStateException("취소는 HELD/CONFIRMED 상태에서만 가능: " + status);
         }
         this.status = ReservationStatus.CANCELLED;
-        this.cancelledAt = LocalDateTime.now();
+        this.cancelledAt = LocalDateTime.now(clock);
     }
 
-    public void expire() {
+    public void expire(Clock clock) {
         this.status = ReservationStatus.EXPIRED;
-        this.cancelledAt = LocalDateTime.now();
+        this.cancelledAt = LocalDateTime.now(clock);
     }
 }
