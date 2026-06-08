@@ -1,5 +1,6 @@
 package com.ktx.ticketing.booking;
 
+import com.ktx.ticketing.booking.ReservationLifecycleTransactionHelper.ExpiredRelease;
 import com.ktx.ticketing.booking.ReservationLifecycleTransactionHelper.Outcome;
 import com.ktx.ticketing.domain.Reservation;
 import com.ktx.ticketing.domain.ReservationRepository;
@@ -62,7 +63,14 @@ class ReservationLifecycleTransactionHelperTest {
         return reservation;
     }
 
-    /** seatInventory→schedule 그래프 stub. seatId(getId)는 취소 경로에서만 쓰여 호출 측이 따로 stub. */
+    /** findById 에 예약 mock 만 연결(소유권 stub 없음) — 소유권을 안 보는 만료 경로용. */
+    private Reservation foundReservation() {
+        Reservation reservation = mock(Reservation.class);
+        when(reservationRepository.findById(RESERVATION_ID)).thenReturn(Optional.of(reservation));
+        return reservation;
+    }
+
+    /** seatInventory→schedule 그래프 stub. seatId(getId)는 취소/만료 경로에서만 쓰여 호출 측이 따로 stub. */
     private SeatInventory withSeatGraph(Reservation reservation) {
         Schedule schedule = mock(Schedule.class);
         when(schedule.getId()).thenReturn(SCHEDULE_ID);
@@ -175,5 +183,42 @@ class ReservationLifecycleTransactionHelperTest {
         assertThat(outcome.result()).isInstanceOf(ReservationCommandResult.Success.class);
         verify(reservation).cancel(CLOCK);
         assertThat(outcome.returnSeatId()).isEqualTo(SEAT_ID);
+    }
+
+    // --- expire (만료 스케줄러, 소유권 무관) ---
+
+    @Test
+    void expire_HELD면_만료전이_좌석복구_식별자_반환() {
+        Reservation reservation = foundReservation();
+        when(reservation.getStatus()).thenReturn(ReservationStatus.HELD);
+        SeatInventory inventory = withSeatGraph(reservation);
+        when(inventory.getId()).thenReturn(SEAT_ID);
+
+        ExpiredRelease released = helper.expire(RESERVATION_ID);
+
+        assertThat(released).isNotNull();
+        assertThat(released.scheduleId()).isEqualTo(SCHEDULE_ID);
+        assertThat(released.seatInventoryId()).isEqualTo(SEAT_ID);
+        verify(reservation).expire(CLOCK);
+        verify(inventory).release();
+    }
+
+    @Test
+    void expire_HELD가_아니면_null_no_op() {
+        // 조회 후 사용자가 이미 확정/취소 — 경합을 상태 재확인으로 흡수
+        Reservation reservation = foundReservation();
+        when(reservation.getStatus()).thenReturn(ReservationStatus.CONFIRMED);
+
+        ExpiredRelease released = helper.expire(RESERVATION_ID);
+
+        assertThat(released).isNull();
+        verify(reservation, never()).expire(any());
+    }
+
+    @Test
+    void expire_예약이_없으면_null() {
+        when(reservationRepository.findById(RESERVATION_ID)).thenReturn(Optional.empty());
+
+        assertThat(helper.expire(RESERVATION_ID)).isNull();
     }
 }

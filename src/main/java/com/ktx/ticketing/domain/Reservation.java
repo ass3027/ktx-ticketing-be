@@ -84,7 +84,11 @@ public class Reservation {
         this.cancelledAt = LocalDateTime.now(clock);
     }
 
+    /** HELD → EXPIRED (TTL 만료). HELD 에서만 — 만료 스케줄러와 사용자 확정/취소가 경합해도 한쪽만 성공. */
     public void expire(Clock clock) {
+        if (status != ReservationStatus.HELD) {
+            throw new IllegalStateException("만료는 HELD 상태에서만 가능: " + status);
+        }
         this.status = ReservationStatus.EXPIRED;
         this.cancelledAt = LocalDateTime.now(clock);
     }

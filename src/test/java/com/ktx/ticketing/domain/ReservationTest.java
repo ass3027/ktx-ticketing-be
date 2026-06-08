@@ -102,4 +102,14 @@ class ReservationTest {
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.EXPIRED);
         assertThat(reservation.getCancelledAt()).isEqualTo(FIXED_NOW);
     }
+
+    @Test
+    void expire_HELD가_아니면_예외() {
+        Reservation reservation = Reservation.hold(new User(), new SeatInventory(), fixedClock());
+        reservation.confirm(fixedClock()); // HELD → CONFIRMED
+
+        // 확정된 예약을 스케줄러가 만료시키면 안 됨(사용자 확정과 만료 경합 시 한쪽만)
+        assertThatThrownBy(() -> reservation.expire(fixedClock())).isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED); // 상태 유지
+    }
 }

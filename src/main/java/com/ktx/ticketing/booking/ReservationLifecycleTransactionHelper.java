@@ -42,6 +42,9 @@ public class ReservationLifecycleTransactionHelper {
         }
     }
 
+    /** 만료 전이로 풀어줄 좌석 — 커밋 후 가용 풀(SADD)·활성 슬롯(DECR) 반환 대상. */
+    record ExpiredRelease(Long scheduleId, Long seatInventoryId) {}
+
     /** HELD → CONFIRMED + 좌석 SOLD. 확정 좌석은 가용 풀에 반환하지 않으므로 활성 슬롯만 반환 대상. */
     @Transactional
     public Outcome confirm(Long reservationId, Long userId) {
@@ -87,5 +90,22 @@ public class ReservationLifecycleTransactionHelper {
         inventory.release();       // → AVAILABLE
         return new Outcome(new ReservationCommandResult.Success(reservation),
                 inventory.getSchedule().getId(), inventory.getId());
+    }
+
+    /**
+     * HELD → EXPIRED + 좌석 AVAILABLE (만료 스케줄러 T3-9). 조회~전이 사이 사용자 confirm/cancel 경합을
+     * <b>상태 재확인</b>으로 흡수 — HELD 가 아니면 {@code null}(no-op, 사용자가 이미 처리). 동시 전이는
+     * {@code @Version} 으로 1건만 성공한다. 반환값은 커밋 후 가용 풀·활성 슬롯 반환 대상.
+     */
+    @Transactional
+    public @Nullable ExpiredRelease expire(Long reservationId) {
+        Reservation reservation = reservationRepository.findById(reservationId).orElse(null);
+        if (reservation == null || reservation.getStatus() != ReservationStatus.HELD) {
+            return null; // 사라졌거나 이미 확정/취소됨 — 만료 불필요
+        }
+        SeatInventory inventory = reservation.getSeatInventory();
+        reservation.expire(clock); // HELD → EXPIRED
+        inventory.release();       // → AVAILABLE
+        return new ExpiredRelease(inventory.getSchedule().getId(), inventory.getId());
     }
 }
