@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class SeatInventoryTest {
 
@@ -46,5 +47,28 @@ class SeatInventoryTest {
         assertThat(inventory.getStatus()).isEqualTo(SeatStatus.AVAILABLE);
         assertThat(inventory.getHeldAt()).isNull();
         assertThat(inventory.getExpiresAt()).isNull();
+    }
+
+    @Test
+    void confirm_HELD가_아니면_예외() {
+        // 갓 생성된 좌석은 AVAILABLE — markHeld 없이 SOLD 전이 불가
+        assertThatThrownBy(inventory::confirm).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void release_SOLD에서도_AVAILABLE로_복구_결제후_취소() {
+        inventory.markHeld(HELD_AT);
+        inventory.confirm(); // HELD → SOLD
+
+        inventory.release(); // SOLD → AVAILABLE (환불 시 좌석 복구)
+
+        assertThat(inventory.getStatus()).isEqualTo(SeatStatus.AVAILABLE);
+        assertThat(inventory.getHeldAt()).isNull();
+    }
+
+    @Test
+    void release_이미_AVAILABLE이면_예외_이중반환_차단() {
+        // 이중 release 는 가용 풀에 좌석을 중복 투입(SADD)해 오버셀로 이어지므로 차단
+        assertThatThrownBy(inventory::release).isInstanceOf(IllegalStateException.class);
     }
 }

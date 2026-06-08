@@ -7,6 +7,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ReservationTest {
 
@@ -58,6 +59,34 @@ class ReservationTest {
 
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
         assertThat(reservation.getCancelledAt()).isNotNull();
+    }
+
+    @Test
+    void confirm_HELD가_아니면_예외_재확정_차단() {
+        Reservation reservation = Reservation.hold(new User(), new SeatInventory(), fixedClock());
+        reservation.confirm(); // HELD → CONFIRMED
+
+        // 이미 CONFIRMED 인 예약 재확정은 상태머신 불변식 위반
+        assertThatThrownBy(reservation::confirm).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void cancel_CONFIRMED에서도_가능_결제후_환불() {
+        Reservation reservation = Reservation.hold(new User(), new SeatInventory(), fixedClock());
+        reservation.confirm();
+
+        reservation.cancel(); // CONFIRMED → CANCELLED (환불 경로)
+
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
+        assertThat(reservation.getCancelledAt()).isNotNull();
+    }
+
+    @Test
+    void cancel_HELD_CONFIRMED가_아니면_예외() {
+        Reservation reservation = Reservation.hold(new User(), new SeatInventory(), fixedClock());
+        reservation.expire(); // HELD → EXPIRED
+
+        assertThatThrownBy(reservation::cancel).isInstanceOf(IllegalStateException.class);
     }
 
     @Test
