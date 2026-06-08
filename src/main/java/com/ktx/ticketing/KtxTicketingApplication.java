@@ -4,11 +4,13 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 import org.springframework.context.annotation.Bean;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 import java.time.Clock;
 
 @SpringBootApplication
 @ConfigurationPropertiesScan
+@EnableScheduling // HELD TTL 만료 스케줄러(T3-9) 활성화
 public class KtxTicketingApplication {
 
     public static void main(String[] args) {

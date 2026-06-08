@@ -35,3 +35,5 @@ booking:
   expiry:
     # HELD TTL 만료 sweep 1회 최대 처리 건수. 밀린 만료는 다음 sweep 이 이어받는다.
     batch-size: 100
+    # sweep 실행 주기(직전 완료~다음 시작 간격). HELD TTL(5분)보다 짧게 둬 만료 좌석을 신속 회수.
+    sweep-interval: 30s
