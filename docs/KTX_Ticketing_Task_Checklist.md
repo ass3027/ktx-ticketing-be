@@ -53,8 +53,8 @@
 - [x] **T3-5** EntryToken 발급/만료/검증 → 불투명 UUID + `entry:{token}`(TTL 10m) Redis 저장. `EntryTokenStore` issue/resolve/revoke. 검증(resolve)은 T3-6 예매가 사용.
 ### ② 예매/결제
 - [x] **T3-5b** (설계 재검토) 예매 결과 반환 타입 결정 → **sealed `BookingResult` 채택** (record: Success/SeatTaken/SoldOut/Overloaded). 근거: 경쟁 패배가 1,000 요청 중 다수 = 정상 흐름 → 예외 부적합(값으로 표현), 컨트롤러가 exhaustive `switch` 로 사유별 HTTP(201/409/410/503+Retry-After) 매핑 시 누락을 컴파일러가 검출. `BookingService`/`LockBookingService` 공개 진입점의 `@Nullable Reservation` 반환 제거. 트랜잭션 내부 헬퍼(`BookingTransactionHelper`)는 `@Nullable` 유지, 매핑은 `LockBookingService` 가 담당. `Overloaded` 는 타입만 정의(발생은 입장 제어 T3-3~5). `ConcurrencyPocTest` 성공 판정은 `instanceof Success` 로 전환.
-- [ ] **T3-6** 예매 API `mode=SEAT` (P2 선점 통합)
-- [ ] **T3-7** 예매 API `mode=AUTO`
+- [x] **T3-6** 예매 API `mode=SEAT` (P2 선점 통합) → `POST /api/reservations`(`BookingController`). 토큰(`X-Entry-Token`) 게이트 → `BookingService.bookSeat`(SREM 선점→DB HELD). **신뢰 경계**: userId/scheduleId 는 토큰(`EntrySession`)에서만, body 는 mode+seatInventoryId 만.
+- [x] **T3-7** 예매 API `mode=AUTO` → 같은 엔드포인트가 mode 로 분기, `BookingService.bookAuto`(SPOP 자동배정). `BookingResult`→HTTP exhaustive 매핑(Success 201/SeatTaken 409/SoldOut 410/Overloaded 503+Retry-After). `BookingControllerTest` 슬라이스 6종(토큰 401·SEAT 미지정 400·201/409/410·신뢰 경계). Spring Boot 4.0 web 슬라이스는 `spring-boot-starter-webmvc-test`로 복원.
 - [ ] **T3-8** 결제 확정(HELD→SOLD) + 취소 + 카운터/활성자 동기화
 - [ ] **T3-9** HELD TTL 만료 스케줄러 → 좌석/카운터/`avail` 복구
 - [ ] **T3-9b** (follow-up) 시간 소스 단일화: `Clock` 빈을 `BookingTransactionHelper`(락 경로, `now()` 동일 패턴)·`Reservation`·`SeatInventory`에도 주입해 흩어진 `LocalDateTime.now()`를 `now(clock)`로 통일. 만료 스케줄러(T3-9)가 시간 의존이므로 그 시점에 함께 정리해 만료 판정 로직을 결정적으로 테스트 가능하게 만든다. (BookingService는 선반영됨)
