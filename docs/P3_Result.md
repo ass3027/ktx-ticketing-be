@@ -16,8 +16,8 @@
 | T3-3 입장 제어(상한 K) | ✅ | `active:` INCR-rollback, K 외부화 |
 | T3-4 초과 시 429/503 + Retry-After | ✅ | 429 + `Retry-After` 헤더 |
 | T3-5 EntryToken 발급/만료/검증 | ✅ | 불투명 UUID + `entry:` TTL, `admission` 패키지 |
-| T3-6 예매 API `mode=SEAT` | ⬜ | |
-| T3-7 예매 API `mode=AUTO` | ⬜ | |
+| T3-6 예매 API `mode=SEAT` | ✅ | `POST /api/reservations`, SREM 선점, 신뢰 경계 |
+| T3-7 예매 API `mode=AUTO` | ✅ | 동일 엔드포인트 mode 분기, SPOP 자동배정 |
 | T3-8 결제 확정/취소 + 카운터 동기화 | ⬜ | |
 | T3-9 HELD TTL 만료 스케줄러 | ⬜ | |
 | T3-9b 시간 소스(Clock) 단일화 | ⬜ | |
@@ -225,3 +225,56 @@ POST /api/entry   body: { scheduleId, userId }
 - `compileJava` ✅
 - `AdmissionServiceTest` 4건 ✅
 - 전체 테스트 ✅ — 설정 바인딩 컨텍스트 로딩 정상, 회귀 없음(46s)
+
+---
+
+## T3-6 / T3-7 — 예매 API (`POST /api/reservations`) (2026-06-08)
+
+### 결정
+단일 엔드포인트가 `mode` 로 SEAT/AUTO 를 분기. 컨트롤러는 **토큰 게이트 + result→HTTP 매핑**만 담당하는 얇은 계층, 예매 로직은 `BookingService` 위임.
+
+| 결정 | 채택 | 근거 |
+|------|------|------|
+| 엔드포인트 | SEAT/AUTO **단일** `POST /api/reservations`, body `mode` 분기 | 동일 자원(예매) 생성, 선점 인벤토리 공유. mode 별 분리는 중복 |
+| 신뢰 경계 | userId/scheduleId 는 **토큰(`EntrySession`)에서만** | body 의 위변조 식별자로 남의 세션 예매하는 길 차단. body 는 mode + (SEAT 시) seatInventoryId 만 |
+| 토큰 검증 | 컨트롤러가 `EntryTokenStore.resolve` 게이트 | 누락/만료/무효 → 401 일괄. T3-5 발급과 짝 |
+| result 매핑 | `BookingResult` exhaustive `switch` | 201/409/410/503 누락을 컴파일러가 검출(T3-5b 채택 효과) |
+
+### API
+```
+POST /api/reservations   header: X-Entry-Token: {token}   body: { mode, seatInventoryId? }
+  201 + { reservationId, expiresAt }    (성공, HELD)
+  401                                   (토큰 누락/만료/무효)
+  400                                   (SEAT 인데 seatInventoryId 누락)
+  409                                   (SEAT 선점 패배 — SeatTaken)
+  410                                   (AUTO 잔여석 없음 — SoldOut)
+  503 + Retry-After                     (Overloaded — 입장 제어서 선차단, 방어 분기)
+```
+
+### 변경 범위
+| 파일 | 변경 |
+|------|------|
+| `booking/BookingController.java` | **신규** — 토큰 게이트 + mode 분기 + `BookingResult`→HTTP. `ReservationRequest`/`ReservationResponse` record |
+| `booking/BookingMode.java` | **신규** — SEAT/AUTO enum |
+| `admission/EntryTokenStore.java` | `resolve` 가시성 공개(컨트롤러 게이트가 사용) |
+
+### 설계 판단
+- **컨트롤러는 얇게**: 선점·DB 전이는 `BookingService`(T3-5b 완료)에 있고, 컨트롤러는 인증 게이트와 표현 매핑만. 테스트 대상도 이 두 가지로 한정.
+- **`Overloaded` 방어 분기**: 입장 제어(T3-3~5)에서 이미 걸러져 예매 단계엔 도달하지 않지만, exhaustive `switch` 를 위해 503 + Retry-After 로 매핑만 둠.
+- **Spring Boot 4.0 web 슬라이스 복원**: `@WebMvcTest`/`MockMvc` 가 4.0에서 별도 모듈로 분리·재배치됨. `spring-boot-starter-webmvc-test` 추가로 합의했던 슬라이스 테스트 전략을 그대로 유지(순수 단위 폴백 불필요). import 경로 2건 이동(`WebMvcTest`, Jackson 3 `tools.jackson.databind.ObjectMapper`).
+
+### 테스트 (`BookingControllerTest`, `@WebMvcTest` 슬라이스 6건)
+컨트롤러 고유 로직 = 토큰 게이트 + result 매핑 + 신뢰 경계:
+- 토큰 헤더 없음 → 401, 예매 **시도 안 함**(`never()`)
+- 무효 토큰 → 401, 예매 시도 안 함
+- SEAT 인데 좌석 미지정 → 400, 예매 시도 안 함
+- SEAT 성공 → 201 + `reservationId`, **토큰의 userId/scheduleId 로 호출**(신뢰 경계 verify)
+- SeatTaken → 409 / SoldOut → 410
+
+> 중첩 스터빙 함정 발견: `thenReturn(Success(reservation(...)))` 처럼 인자 안에서 mock 을 stub 하면 바깥 stub 미완료로 `UnfinishedStubbingException`. mock 을 `when()` 바깥에서 먼저 생성해 해소.
+> HTTP 바인딩(JSON 역직렬화·헤더 파싱)은 프레임워크 동작이라 슬라이스로 한 번 훑고, 실제 정합성은 통합 테스트(T3-11) 책임.
+
+### 검증 결과
+- `compileTestJava` ✅ (webmvc-test 스타터 해석 + import 경로 수정)
+- `BookingControllerTest` 6건 ✅
+- 전체 단위 테스트 ✅ — `ConcurrencyPocTest` 만 Docker 데몬 미기동(Testcontainers) 환경 사유로 제외
