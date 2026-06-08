@@ -18,7 +18,7 @@
 | T3-5 EntryToken 발급/만료/검증 | ✅ | 불투명 UUID + `entry:` TTL, `admission` 패키지 |
 | T3-6 예매 API `mode=SEAT` | ✅ | `POST /api/reservations`, SREM 선점, 신뢰 경계 |
 | T3-7 예매 API `mode=AUTO` | ✅ | 동일 엔드포인트 mode 분기, SPOP 자동배정 |
-| T3-8 결제 확정/취소 + 카운터 동기화 | ⬜ | |
+| T3-8 결제 확정/취소 + 카운터 동기화 | ✅ | 커밋 후 부수효과, 상태머신 가드, `ReservationController` |
 | T3-9 HELD TTL 만료 스케줄러 | ⬜ | |
 | T3-9b 시간 소스(Clock) 단일화 | ⬜ | |
 | T3-10 Redis-DB reconcile 잡 | ⬜ | |
@@ -278,3 +278,62 @@ POST /api/reservations   header: X-Entry-Token: {token}   body: { mode, seatInve
 - `compileTestJava` ✅ (webmvc-test 스타터 해석 + import 경로 수정)
 - `BookingControllerTest` 6건 ✅
 - 전체 단위 테스트 ✅ — `ConcurrencyPocTest` 만 Docker 데몬 미기동(Testcontainers) 환경 사유로 제외
+
+---
+
+## T3-8 — 결제 확정 / 취소 + 카운터·활성자 동기화 (2026-06-08)
+
+### 결정
+확정 `POST /api/reservations/{id}/confirm`(200), 취소 `DELETE /api/reservations/{id}`(204). 자원이 "기존 예약"이라 예매 생성(`BookingController`)과 분리한 `ReservationController` 신설. 오케스트레이터(`ReservationLifecycleService`) + `@Transactional` 헬퍼 2계층.
+
+| 결정 | 채택 | 근거 |
+|------|------|------|
+| **Redis 부수효과 순서** | DB **커밋 이후** returnSeat(SADD)·leave(DECR) 실행 | 커밋 전 좌석/슬롯을 풀면 롤백 시 오버셀·과다 입장. 비-tx 오케스트레이터가 tx 헬퍼 반환(=커밋) 후 수행 |
+| **이중 확정/취소 흡수** | 헬퍼가 **실제 전이 시에만** 식별자(scheduleId/seatId)를 채워 반환, 오케스트레이터는 식별자 유무로 부수효과 가름 | 이중 confirm→이중 DECR(과다 입장), 이중 cancel→이중 SADD(오버셀) 차단. 멱등 취소는 부수효과 0 |
+| **상태머신 가드** | `Reservation.confirm()` HELD만, `cancel()` HELD/CONFIRMED만 / `SeatInventory.confirm()` HELD→SOLD, `release()` 비-AVAILABLE만 | 불변식("정합성의 심장")을 도메인에서 강제. 이중 release=가용 풀 중복 투입=오버셀 |
+| **분산락 미사용** | 확정/취소는 `@Version`(낙관적 락)만 | 단일 예약·단일 소유자 연산이라 좌석 선점 같은 고경합 아님. 동시 전이는 version 충돌로 1건만 성공 |
+| **확정 시 좌석 미반환** | SOLD 좌석은 avail Set에 SADD 안 함 | 판매 좌석은 잔여 아님. 취소/만료만 반환 |
+| **인증** | X-Entry-Token 게이트 + 소유권(토큰 userId = 예약 소유자) | 신뢰 경계 — path 의 id 로 남의 예약 조작 차단. 성공 시 토큰 revoke |
+| **결과 표현** | sealed `ReservationCommandResult`(Success/NotFound/Forbidden/IllegalState) | `BookingResult` 선례. exhaustive switch 로 200/204·404·403·409 매핑 누락을 컴파일러가 검출 |
+
+### 상태 전이 / 응답
+| 연산 | 현재 상태 | HTTP | 커밋 후 부수효과 |
+|------|----------|------|------|
+| confirm | HELD | 200 +{reservationId,status} | leave, 토큰 revoke |
+| confirm | 그 외 | 409 | 없음 |
+| cancel | HELD/CONFIRMED | 204 | returnSeat(SADD), leave, revoke |
+| cancel | CANCELLED | 204(멱등) | 없음 |
+| cancel | EXPIRED | 409 | 없음 |
+| 둘 다 | 없음/타 소유자 | 404 / 403 | 없음 |
+
+### 변경 범위
+| 파일 | 변경 |
+|------|------|
+| `domain/Reservation.java`·`SeatInventory.java` | confirm/cancel/release 전이 가드 추가 (T3-8a) |
+| `booking/ReservationCommandResult.java` | **신규** — sealed 결과 타입 (T3-8a) |
+| `booking/ReservationLifecycleTransactionHelper.java` | **신규** — `@Transactional` 전이 + 식별자 추출 (T3-8b) |
+| `booking/ReservationLifecycleService.java` | **신규** — 커밋 후 조건부 부수효과 오케스트레이터 (T3-8b) |
+| `booking/ReservationController.java` | **신규** — confirm/cancel 엔드포인트 (T3-8c) |
+| `admission/EntryTokenStore.java` | `revoke` 가시성 공개 |
+
+### 설계 판단 / 알려진 한계
+- **LAZY 그래프 식별자 선추출**: 커밋 후 엔티티는 detached라 `reservation.getSeatInventory().getSchedule()` 접근 시 `LazyInitializationException`. 헬퍼가 트랜잭션 내에서 scheduleId/seatId를 꺼내 `Outcome`에 담아 넘긴다.
+- **드리프트는 보수적**: 커밋 후 Redis 실패 시 좌석 AVAILABLE이나 avail Set 누락 / 활성자 과다 → 오버셀 아님, T3-10 reconcile이 수렴.
+- **버려진 세션 누수**: 토큰만 받고 미예매로 버려진 활성자는 leave가 안 불림 → T3-10 + L6 soak에서 검증.
+- **동시 전이 엣지**: 동시 confirm/cancel 시 `@Version` 충돌 → `OptimisticLockException`이 현재 500으로 전파. 단일 소유자·저경합이라 T3-8 범위에선 매핑 보류, 실제 동작은 T3-11 통합 테스트.
+- **MQ 이벤트(예매확정/취소)는 범위 밖** — 비동기 사이드, 후속 페이즈.
+
+### 테스트
+| 클래스 | 건수 | 검증 |
+|--------|------|------|
+| `ReservationTest`·`SeatInventoryTest` 확장 | +6 | 전이 가드(허용 상태·거부 시 상태 불변) |
+| `ReservationLifecycleServiceTest` | 4 | 부수효과 조건부 실행 — 확정=leave만, 취소=SADD+leave, 멱등=무, 거절=무 |
+| `ReservationLifecycleTransactionHelperTest` | 8 | 소유권→상태→멱등 라우팅, 전이 차단, 식별자 추출 |
+| `ReservationControllerTest` | 10 | 토큰 게이트(부재·무효), 신뢰 경계, result→HTTP, revoke 조건 |
+
+> 상태 전이 자체는 도메인 테스트(T3-8a), 서비스는 호출/부수효과, 컨트롤러는 매핑으로 책임 분리. 실제 트랜잭션 커밋·낙관적 락·동시성은 통합 테스트(T3-11) 이관.
+
+### 검증 결과
+- `compileJava`/`compileTestJava` ✅
+- 신규/확장 테스트 28건 ✅
+- 전체 단위 테스트 ✅ — `ConcurrencyPocTest` 만 Docker 데몬 미기동(Testcontainers) 환경 사유로 제외 (80/81)
