@@ -53,6 +53,7 @@ class SeatInventoryTest {
     void confirm_HELD가_아니면_예외() {
         // 갓 생성된 좌석은 AVAILABLE — markHeld 없이 SOLD 전이 불가
         assertThatThrownBy(inventory::confirm).isInstanceOf(IllegalStateException.class);
+        assertThat(inventory.getStatus()).isEqualTo(SeatStatus.AVAILABLE); // 거부 시 상태 유지
     }
 
     @Test

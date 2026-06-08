@@ -47,6 +47,8 @@ class ReservationTest {
         reservation.confirm();
 
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
+        // confirm() 은 LocalDateTime.now() 를 직접 부르므로 정확값 단언 불가 → isNotNull 로 한정.
+        // T3-9b(Clock 단일화) 후 hold/markHeld 처럼 isEqualTo(고정시각) 으로 강화할 것.
         assertThat(reservation.getConfirmedAt()).isNotNull();
         assertThat(reservation.getCancelledAt()).isNull();
     }
@@ -68,6 +70,8 @@ class ReservationTest {
 
         // 이미 CONFIRMED 인 예약 재확정은 상태머신 불변식 위반
         assertThatThrownBy(reservation::confirm).isInstanceOf(IllegalStateException.class);
+        // 거부 시 상태는 그대로 — 던지기 전에 부분 변이가 없어야 한다
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
     }
 
     @Test
@@ -87,6 +91,7 @@ class ReservationTest {
         reservation.expire(); // HELD → EXPIRED
 
         assertThatThrownBy(reservation::cancel).isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.EXPIRED); // 상태 유지
     }
 
     @Test

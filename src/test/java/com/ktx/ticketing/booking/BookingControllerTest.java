@@ -15,7 +15,6 @@ import java.time.LocalDateTime;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -116,7 +115,7 @@ class BookingControllerTest {
     }
 
     @Test
-    void AUTO_선점패배_SeatTaken은_409() throws Exception {
+    void SEAT_선점패배_SeatTaken은_409() throws Exception {
         givenValidToken();
         when(bookingService.bookSeat(USER_ID, SCHEDULE_ID, SEAT_ID))
                 .thenReturn(new BookingResult.SeatTaken());
