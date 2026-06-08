@@ -99,7 +99,8 @@ public class ReservationLifecycleTransactionHelper {
      */
     @Transactional
     public @Nullable ExpiredRelease expire(Long reservationId) {
-        Reservation reservation = reservationRepository.findById(reservationId).orElse(null);
+        // 만료는 seatInventory 를 반드시 건드리므로 fetch join 으로 함께 로드해 N+1(LAZY 재조회)을 피한다.
+        Reservation reservation = reservationRepository.findWithSeatById(reservationId).orElse(null);
         if (reservation == null || reservation.getStatus() != ReservationStatus.HELD) {
             return null; // 사라졌거나 이미 확정/취소됨 — 만료 불필요
         }

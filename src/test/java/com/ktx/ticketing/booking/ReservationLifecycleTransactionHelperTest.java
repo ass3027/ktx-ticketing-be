@@ -63,10 +63,10 @@ class ReservationLifecycleTransactionHelperTest {
         return reservation;
     }
 
-    /** findById 에 예약 mock 만 연결(소유권 stub 없음) — 소유권을 안 보는 만료 경로용. */
+    /** findWithSeatById 에 예약 mock 만 연결(소유권 stub 없음) — 소유권을 안 보는 만료 경로용(fetch join). */
     private Reservation foundReservation() {
         Reservation reservation = mock(Reservation.class);
-        when(reservationRepository.findById(RESERVATION_ID)).thenReturn(Optional.of(reservation));
+        when(reservationRepository.findWithSeatById(RESERVATION_ID)).thenReturn(Optional.of(reservation));
         return reservation;
     }
 
@@ -217,7 +217,7 @@ class ReservationLifecycleTransactionHelperTest {
 
     @Test
     void expire_예약이_없으면_null() {
-        when(reservationRepository.findById(RESERVATION_ID)).thenReturn(Optional.empty());
+        when(reservationRepository.findWithSeatById(RESERVATION_ID)).thenReturn(Optional.empty());
 
         assertThat(helper.expire(RESERVATION_ID)).isNull();
     }
