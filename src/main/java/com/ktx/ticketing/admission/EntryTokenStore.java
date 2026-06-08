@@ -27,8 +27,8 @@ public class EntryTokenStore {
         return new EntryToken(token);
     }
 
-    /** 토큰을 검증해 가리키는 세션을 돌려준다. 없거나 만료됐으면 {@code null}. */
-    @Nullable EntrySession resolve(String token) {
+    /** 토큰을 검증해 가리키는 세션을 돌려준다. 없거나 만료됐으면 {@code null}. 예매(T3-6)가 토큰 게이트로 사용. */
+    public @Nullable EntrySession resolve(String token) {
         String value = redis.opsForValue().get(key(token));
         if (value == null) {
             return null;
