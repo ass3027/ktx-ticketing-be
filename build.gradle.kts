@@ -45,6 +45,8 @@ dependencies {
     testAnnotationProcessor("org.projectlombok:lombok")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+    // Spring Boot 4.0에서 web 슬라이스(@WebMvcTest/MockMvc)는 별도 스타터로 분리됐다. 버전은 BOM이 관리.
+    testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
     testRuntimeOnly("com.h2database:h2")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     testImplementation("org.mockito:mockito-core:5.14.2")
