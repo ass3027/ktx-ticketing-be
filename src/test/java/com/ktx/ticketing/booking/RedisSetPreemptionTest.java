@@ -9,67 +9,28 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
+import java.time.Clock;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
+/**
+ * 위임 메서드(returnSeat/initInventory/availableCount)의 키 포맷·널 가드·연산 순서 계약을 고정한다.
+ * 선점 경로(tryPreemptSeat/popAnySeat)는 Lua 스크립트라 모킹 충실도가 낮아 실제 Redis 를 쓰는
+ * {@code RedisSetPreemptionLuaTest}(Testcontainers)에서 검증한다.
+ */
 @ExtendWith(MockitoExtension.class)
 class RedisSetPreemptionTest {
 
     @Mock private StringRedisTemplate redis;
     @Mock private SetOperations<String, String> setOps;
+    @Mock private Clock clock;
     @InjectMocks private RedisSetPreemption service;
 
     @BeforeEach
     void setUp() {
         when(redis.opsForSet()).thenReturn(setOps);
-    }
-
-    @Test
-    void tryPreemptSeat_SREM이_1_반환하면_선점_성공() {
-        when(setOps.remove("avail:1", "42")).thenReturn(1L);
-
-        boolean result = service.tryPreemptSeat(1L, 42L);
-
-        assertThat(result).isTrue();
-    }
-
-    @Test
-    void tryPreemptSeat_SREM이_0_반환하면_선점_실패() {
-        when(setOps.remove("avail:1", "42")).thenReturn(0L);
-
-        boolean result = service.tryPreemptSeat(1L, 42L);
-
-        assertThat(result).isFalse();
-    }
-
-    @Test
-    void tryPreemptSeat_SREM이_null_반환해도_NPE없이_선점_실패() {
-        // 파이프라인/트랜잭션 모드에서 Redis 반환이 null일 수 있음 → 널 가드가 false로 흡수
-        when(setOps.remove("avail:1", "42")).thenReturn(null);
-
-        boolean result = service.tryPreemptSeat(1L, 42L);
-
-        assertThat(result).isFalse();
-    }
-
-    @Test
-    void popAnySeat_값이_있으면_seatInventoryId_반환() {
-        when(setOps.pop("avail:1")).thenReturn("99");
-
-        Long result = service.popAnySeat(1L);
-
-        assertThat(result).isEqualTo(99L);
-    }
-
-    @Test
-    void popAnySeat_Set이_비어있으면_null_반환() {
-        when(setOps.pop("avail:1")).thenReturn(null);
-
-        Long result = service.popAnySeat(1L);
-
-        assertThat(result).isNull();
     }
 
     @Test
@@ -81,12 +42,14 @@ class RedisSetPreemptionTest {
     }
 
     @Test
-    void initInventory_기존_Set을_먼저_비우고_전체_좌석을_적재() {
+    void initInventory_avail와_선점시각마커를_먼저_비우고_전체_좌석을_적재() {
         service.initInventory(1L, List.of(10L, 20L));
 
-        // delete가 add보다 먼저여야 재초기화 시 좌석 중복 적재를 막는다 → 순서가 계약
+        // delete가 add보다 먼저여야 재초기화 시 좌석 중복 적재를 막는다 → 순서가 계약.
+        // 선점 시각 마커(preempt:ts:{id})도 함께 비워야 이전 스케줄의 묵은 ts가 reconcile를 오판시키지 않는다.
         var inOrder = inOrder(redis, setOps);
         inOrder.verify(redis).delete("avail:1");
+        inOrder.verify(redis).delete("preempt:ts:1");
         inOrder.verify(setOps).add("avail:1", "10");
         inOrder.verify(setOps).add("avail:1", "20");
     }
