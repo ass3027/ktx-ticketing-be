@@ -37,3 +37,8 @@ booking:
     batch-size: 100
     # sweep 실행 주기(직전 완료~다음 시작 간격). HELD TTL(5분)보다 짧게 둬 만료 좌석을 신속 회수.
     sweep-interval: 30s
+  reconcile:
+    # Redis 가용 풀 ↔ DB(SoT) 드리프트 보정 주기. 드리프트는 드물어 만료(30s)보다 덜 잦게.
+    interval: 60s
+    # 이 시간 이내 선점된 missing 좌석은 [SREM~커밋] in-flight 로 보고 SADD 건너뜀(>최대 트랜잭션 소요).
+    preempt-grace: 5m
