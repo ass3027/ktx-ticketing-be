@@ -2,6 +2,8 @@ package com.ktx.ticketing.booking;
 
 import org.jspecify.annotations.Nullable;
 
+import java.util.Set;
+
 /**
  * 좌석 선점 백엔드 추상화. 원자적 선점 지점(현재 Redis Set)에 대한 결합을 호출 측에서 분리한다.
  *
@@ -26,4 +28,18 @@ public interface SeatPreemption {
 
     /** 약한 일관성 잔여 좌석 수(조회/표시용). */
     long availableCount(Long scheduleId);
+
+    // --- T3-10 reconcile 지원 (DB(SoT)와 가용 풀 드리프트 보정) ---
+
+    /** 현재 가용 풀에 든 좌석 id 전체(SMEMBERS). reconcile 가 DB AVAILABLE 집합과 diff 한다. */
+    Set<Long> availableSeatIds(Long scheduleId);
+
+    /** 단건 좌석을 가용 풀에서 제거(SREM). stale(Redis有 DB無) 보정 — 최악이 언더셀이라 상시 안전. */
+    void removeSeat(Long scheduleId, Long seatInventoryId);
+
+    /**
+     * 좌석의 마지막 선점 시각(epoch millis). 기록이 없으면 {@code 0}.
+     * reconcile 가 missing 좌석을 풀로 되돌리기(SADD) 전, 이 값이 최근이면 in-flight 선점으로 보고 건너뛴다.
+     */
+    long preemptedAtMillis(Long scheduleId, Long seatInventoryId);
 }

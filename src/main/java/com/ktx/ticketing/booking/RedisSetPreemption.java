@@ -8,6 +8,8 @@ import org.springframework.stereotype.Service;
 
 import java.time.Clock;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Redis Set avail:{scheduleId}를 원자적으로 조작해 좌석을 선점하는 {@link SeatPreemption} 구현체.
@@ -91,6 +93,26 @@ public class RedisSetPreemption implements SeatPreemption {
     public long availableCount(Long scheduleId) {
         Long size = redis.opsForSet().size(key(scheduleId));
         return size == null ? 0 : size;
+    }
+
+    @Override
+    public Set<Long> availableSeatIds(Long scheduleId) {
+        Set<String> members = redis.opsForSet().members(key(scheduleId));
+        if (members == null || members.isEmpty()) {
+            return Set.of();
+        }
+        return members.stream().map(Long::parseLong).collect(Collectors.toSet());
+    }
+
+    @Override
+    public void removeSeat(Long scheduleId, Long seatInventoryId) {
+        redis.opsForSet().remove(key(scheduleId), seatInventoryId.toString());
+    }
+
+    @Override
+    public long preemptedAtMillis(Long scheduleId, Long seatInventoryId) {
+        Object ts = redis.opsForHash().get(tsKey(scheduleId), seatInventoryId.toString());
+        return ts == null ? 0L : Long.parseLong(ts.toString());
     }
 
     private String nowMillis() {

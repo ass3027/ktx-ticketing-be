@@ -30,4 +30,11 @@ public interface ScheduleRepository extends JpaRepository<Schedule, Long> {
                                  @Param("from") LocalDateTime from,
                                  @Param("afterId") Long afterId,
                                  Pageable pageable);
+
+    /**
+     * 아직 출발하지 않은(departureTime &gt; now) 운행편 id 목록. T3-10 reconcile 대상 — 이미 출발한 편은
+     * 가용 풀 드리프트를 보정할 의미가 없으므로 제외해 잡 범위를 미출발 편으로 한정한다.
+     */
+    @Query("SELECT s.id FROM Schedule s WHERE s.departureTime > :now")
+    List<Long> findUpcomingIds(@Param("now") LocalDateTime now);
 }
