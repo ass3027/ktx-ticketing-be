@@ -21,7 +21,7 @@
 | T3-8 결제 확정/취소 + 카운터 동기화 | ✅ | 커밋 후 부수효과, 상태머신 가드, `ReservationController` |
 | T3-9 HELD TTL 만료 스케줄러 | ✅ | sweep 건별 트랜잭션, 커밋 후 SADD+DECR |
 | T3-9b 시간 소스(Clock) 단일화 | ✅ | confirm/cancel/expire `now(clock)` |
-| T3-10 Redis-DB reconcile 잡 | ⬜ | |
+| T3-10 Redis-DB reconcile 잡 | ✅ | 선점 Lua ts 마커(갈래 1) + avail↔DB 수렴, active 분리 |
 | T3-11 통합 테스트(정합성 자동화) | ⬜ | |
 
 ---
@@ -381,3 +381,54 @@ POST /api/reservations   header: X-Entry-Token: {token}   body: { mode, seatInve
 ### 검증 결과
 - `compileJava`/`compileTestJava` ✅
 - 전체 87/88 ✅ — `ConcurrencyPocTest` 만 Docker 미기동 환경 사유 제외
+
+---
+
+## T3-10 — Redis–DB reconcile 잡 (2026-06-09)
+
+### 결정
+`avail:{scheduleId}` Set(Redis)과 DB(SoT, `SeatInventory.AVAILABLE`)는 원자적으로 갱신되지 않아 드리프트가 생긴다(예매 롤백 시 보상 SADD 없음 / 커밋 후 부수효과 실패 / 크래시). 주기 잡으로 **DB 기준 수렴**시킨다. 착수 전 `KTX_Ticketing_Reconcile_Design.md` 토론으로 §10 열린 결정 2개를 확정했다.
+
+| 결정 | 채택 | 근거 |
+|------|------|------|
+| **SADD 안전화 전략** | **갈래 1** — 좌석별 Redis 선점시각 마커(온라인 양방향) | 정합성 증명 스토리가 풍부해 포트폴리오 평가물에 유리, missing 온라인 자동 치유 |
+| **`active:{id}` reconcile** | **분리**(별도 follow-up) | SoT 가 DB 아닌 entry token 집합 → 성격 상이. T3-10 은 avail↔DB 로 범위 한정 |
+| **방향 비대칭** | stale 제거(SREM)=상시 안전 / missing 추가(SADD)=in-flight 아닐 때만 | SREM 최악=언더셀(자가치유), SADD 최악=**오버셀(치명적)** → SADD 에만 안전장치 |
+| **in-flight 게이트** | 선점과 한 Lua 로 ts 원자 기록, `now − ts > grace` 일 때만 SADD | `[SREM~커밋]` 윈도우의 좌석을 missing 으로 오판해 되살리면 오버셀. 영속 마커라 §6(B) 2회-스냅샷 사슬도 막힘 |
+| **마커 저장처** | DB 칼럼 아닌 **Redis 해시** `preempt:ts:{sid}` | 핫패스 DB 쓰기·행잠금 직렬화·패자 쓰기·AUTO(SPOP) 비원자성 회피(설계노트 §8) |
+| **대상 한정** | 미출발 스케줄(`findUpcomingIds`) | 이미 출발한 편은 보정 의미 없음 |
+| **다중 스위퍼** | 락 불필요 | 보정 멱등 + ts 게이트로 오버셀 차단 — `HeldExpiryScheduler` 동형 |
+
+### 변경 범위
+| 파일 | 변경 |
+|------|------|
+| `booking/RedisSetPreemption.java` | SREM/SPOP → **Lua 원자화**(선점 성공 시에만 `HSET preempt:ts`), `Clock` 주입, `initInventory` 가 ts 해시도 정리 |
+| `booking/SeatPreemption.java` | reconcile SPI — `availableSeatIds`(SMEMBERS)·`removeSeat`(SREM)·`preemptedAtMillis`(HGET) |
+| `domain/SeatInventoryRepository.java` | `findAvailableIdsByScheduleId`(id 프로젝션) |
+| `domain/ScheduleRepository.java` | `findUpcomingIds(now)` |
+| `booking/ReconciliationService.java` | **신규** — 스케줄별 avail diff·보정, `DriftReport` 집계 |
+| `booking/ReconciliationScheduler.java` | **신규** — `@Scheduled` 위임, 보정 시만 로깅 |
+| `booking/ReconcileProperties.java` | **신규** — `interval`·`preempt-grace` |
+| `application.yml` | `reconcile.interval=60s`, `preempt-grace=5m` |
+
+### 설계 판단 / 한계
+- **잔여석 카운터 무처리**: `SCARD(avail)` 파생(T3-2)이라 avail 보정 시 자동 수렴.
+- **선점 핫패스 비용**: 선점당 Redis 쓰기 1회(HSET) 추가 — 갈래 1 의 상시비용. INCR/HSET 급이라 L1 영향 미미(측정은 P4).
+- **HMGET 일괄 ts 조회 / `preempt:ts` 해시 TTL 정리**: 측정 후 최적화로 미룸(현재 건별 HGET, 해시는 좌석 수 bound) — T3-2 SCARD·E3 와 동일 원칙.
+- **active 카운터 드리프트는 미해결**: 버려진 세션(토큰만 받고 미예매) 보정은 별도 follow-up(SoT=entry token 집합).
+- **콜드 스타트 부작용**: 기동 직후 첫 reconcile 가 빈 Redis 풀을 DB 기준으로 채운다(ts 없음 → 전량 SADD). 의도된 자가치유지만 첫 실행은 무겁다.
+
+### 테스트
+| 클래스 | 건수 | 검증 |
+|--------|------|------|
+| `RedisSetPreemptionTest` (단위) | 4 | 위임(returnSeat/initInventory 순서+ts삭제/availableCount 널가드) |
+| `RedisSetPreemptionLuaTest` (통합) | 4 | 선점 성공=ts 기록·풀 제거 / 실패=ts 미기록 / SPOP=ts 기록 |
+| `ReconciliationServiceTest` (단위) | 5 | 드리프트 없음 / stale 제거 / missing 복원(흔적없음·grace밖) / **최근 선점=되돌림 없음(오버셀 방지)** |
+| `ReconciliationIntegrationTest` (통합) | 2 | avail↔DB 수렴 / in-flight 좌석 보존(오버셀 방지) |
+
+> 선점 경로는 Lua 라 모킹 충실도가 낮아 실제 Redis(Testcontainers)로, 보정 로직은 Clock 고정 단위로 분업.
+
+### 검증 결과
+- `compileJava`/`compileTestJava` ✅
+- 단위 테스트(`ReconciliationServiceTest` 5종 외) ✅
+- 통합 테스트(`RedisSetPreemptionLuaTest`·`ReconciliationIntegrationTest`)는 로컬 Docker 미기동으로 **CI(GitHub Actions)에서 실행**
