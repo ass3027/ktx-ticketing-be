@@ -3,6 +3,7 @@ package com.ktx.ticketing.booking;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -13,10 +14,11 @@ import org.springframework.stereotype.Component;
  * <p>분산 환경 다중 인스턴스가 동시에 sweep 해도 헬퍼의 상태 재확인 + {@code @Version} 이 이중 처리를
  * 막으므로, 분산락(ShedLock 등)은 정합성상 불필요하다(중복 작업만 낭비).
  *
- * <p>HELD TTL(5분) ≫ sweep 주기라 자동화 테스트 중 만료 대상이 생기지 않아 sweep 은 빈 작업이 된다 —
- * 스케줄링을 전역 활성화해도 테스트 결정성을 해치지 않는다.
+ * <p>{@code booking.scheduler.enabled=false} 로 배경 sweep 을 끌 수 있다(기본 on, 운영 무영향).
+ * 통합 테스트는 이를 끄고 {@link HeldExpiryService#sweep()} 을 수동 트리거해 만료 시점을 결정적으로 제어한다(T3-11).
  */
 @Component
+@ConditionalOnProperty(name = "booking.scheduler.enabled", havingValue = "true", matchIfMissing = true)
 @RequiredArgsConstructor
 public class HeldExpiryScheduler {
 

@@ -39,11 +39,14 @@ class ConcurrencyPocTest extends AbstractIntegrationTest {
 
     @BeforeEach
     void resetState() {
-        // DB: 대상 좌석을 AVAILABLE로 초기화
+        // DB: 대상 좌석을 AVAILABLE로 초기화. release() 는 "이미 AVAILABLE 재반환 금지" 불변식(오버셀 방지)을
+        // 강제하므로 직전 테스트가 HELD/SOLD로 남긴 경우에만 호출한다. 시드 직후(첫 메서드)는 이미 AVAILABLE 이라 건너뜀.
         SeatInventory inv = seatInventoryRepository.findById(SEAT_INVENTORY_ID)
                 .orElseThrow(() -> new IllegalStateException("SeatInventory not found. DataInitializer가 실행됐는지 확인하세요."));
-        inv.release();
-        seatInventoryRepository.save(inv);
+        if (inv.getStatus() != SeatStatus.AVAILABLE) {
+            inv.release();
+            seatInventoryRepository.save(inv);
+        }
 
         // Redis: avail Set에 대상 좌석 1개만 세팅
         preemptionService.initInventory(SCHEDULE_ID, List.of(SEAT_INVENTORY_ID));

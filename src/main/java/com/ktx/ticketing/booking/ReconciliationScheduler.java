@@ -3,6 +3,7 @@ package com.ktx.ticketing.booking;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -12,8 +13,12 @@ import org.springframework.stereotype.Component;
  *
  * <p>다중 인스턴스가 동시에 reconcile 해도 정합성은 보존된다(보정 연산 멱등 + 선점 시각 마커가 in-flight 좌석의
  * SADD 를 막아 오버셀 차단). 락은 불필요하며 중복 작업만 낭비된다 — {@link HeldExpiryScheduler} 와 동일 서술.
+ *
+ * <p>{@code booking.scheduler.enabled=false} 로 배경 reconcile 을 끌 수 있다(기본 on, 운영 무영향).
+ * 통합 테스트는 이를 끄고 {@link ReconciliationService#reconcile()} 을 수동 트리거해 결정성을 확보한다(T3-11).
  */
 @Component
+@ConditionalOnProperty(name = "booking.scheduler.enabled", havingValue = "true", matchIfMissing = true)
 @RequiredArgsConstructor
 public class ReconciliationScheduler {
 
