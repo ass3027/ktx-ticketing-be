@@ -17,7 +17,7 @@ import org.testcontainers.utility.DockerImageName;
  * 죽은 컨테이너에 붙어 {@code ConnectException} 이 난다(레퍼런스가 명시적으로 경고하는 케이스).
  * 빈 방식은 컨테이너 stop 시점을 Spring 이 컨텍스트 종료에 맞춰 처리해 이 mismatch 를 없앤다.
  *
- * <p>동일 설정({@code @SpringBootTest @ActiveProfiles("local")})을 공유하는 통합 테스트는 컨텍스트
+ * <p>동일 설정({@code @SpringBootTest @ActiveProfiles("test")})을 공유하는 통합 테스트는 컨텍스트
  * 캐시 1개를 재사용하므로 컨테이너도 1세트만 뜬다. 설정이 다른 테스트가 생기면 별도 컨텍스트가
  * 새 컨테이너를 띄우되, lifecycle 은 각 컨텍스트가 안전하게 관리한다.
  *

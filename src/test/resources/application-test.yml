@@ -1,0 +1,19 @@
+# 통합 테스트 프로파일 — 메인 application.yml 을 base 로 상속하고 아래 키만 오버라이드한다.
+# datasource/redis 는 @ServiceConnection(ContainersConfig)이 Testcontainers 주소로 덮으므로 여기 두지 않는다.
+spring:
+  jpa:
+    hibernate:
+      # 메인은 ddl-auto: none(Flyway/수동 스키마 전제). 테스트는 컨텍스트마다 빈 스키마가 필요 → create-drop.
+      ddl-auto: create-drop
+    show-sql: false
+
+booking:
+  # 배경 sweep/reconcile 정지 → 통합 테스트가 sweep()/reconcile() 을 수동 트리거해 결정성 확보(T3-11).
+  # 토글 off 라도 @ConditionalOnProperty 가 스케줄러 빈을 제외할 뿐, 아래 interval 값은 플레이스홀더 해석용으로 유지.
+  scheduler:
+    enabled: false
+  expiry:
+    sweep-interval: 1h    # 토글 off 라 미발화. @Scheduled 플레이스홀더 해석·바인딩 안전용.
+  reconcile:
+    interval: 1h          # 토글 off 라 미발화. 플레이스홀더 해석용.
+  # admission.*, expiry.batch-size, reconcile.preempt-grace 등 나머지는 메인 application.yml 에서 상속.
