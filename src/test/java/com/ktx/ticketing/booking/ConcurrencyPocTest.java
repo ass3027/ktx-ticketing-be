@@ -2,16 +2,20 @@ package com.ktx.ticketing.booking;
 
 import com.ktx.ticketing.domain.*;
 import com.ktx.ticketing.support.AbstractIntegrationTest;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.transaction.support.TransactionTemplate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -19,7 +23,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * T2-5: 동시 1,000 요청 oversell=0 검증 (M2 리스크 게이트)
  *
  * 인프라(MySQL/Redis)는 {@link AbstractIntegrationTest} 의 Testcontainers 가 자동 기동한다.
- * 시드 데이터는 local 프로필의 DataInitializer 가 생성한다(SeatInventory id=1, schedule id=1).
+ * 시드 데이터는 이 테스트가 {@code @BeforeEach} 에서 도메인 엔티티 + JPA 로 저장한다(train/schedule/seat/
+ * seat_inventory 각 1건 + user 1..10000). {@code @Profile("local")} 의 DataInitializer(50k 좌석)는 test
+ * 프로파일에서 안 돌고, 또 이 정합성 테스트엔 좌석 1개만 필요하므로 자급자족한다.
  *
  * E1 실험 데이터:
  *   (A) Redis 선점(SREM) + 낙관락 → 성공=1 보장
@@ -28,35 +34,85 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ConcurrencyPocTest extends AbstractIntegrationTest {
 
     static final int THREAD_COUNT = 1000;
-    static final Long SCHEDULE_ID = 1L;
-    static final Long SEAT_INVENTORY_ID = 1L;
+    /** userId 순환 범위(runConcurrently 의 (i % USER_COUNT)+1)와 일치 — 이 수만큼 user 행을 시드한다. */
+    static final int USER_COUNT = 10_000;
 
     @Autowired BookingService bookingService;
     @Autowired LockBookingService lockBookingService;
     @Autowired SeatPreemption preemptionService;
     @Autowired SeatInventoryRepository seatInventoryRepository;
     @Autowired ReservationRepository reservationRepository;
+    @Autowired EntityManager em;
+    @Autowired TransactionTemplate tx;
+
+    // 시드된 엔티티의 실제 id(@GeneratedValue 라 persist 후 채워짐). booking 호출·단언이 참조한다.
+    Long scheduleId;
+    Long seatInventoryId;
 
     @BeforeEach
     void resetState() {
+        seedOnce();
+
         // DB: 대상 좌석을 AVAILABLE로 초기화. release() 는 "이미 AVAILABLE 재반환 금지" 불변식(오버셀 방지)을
         // 강제하므로 직전 테스트가 HELD/SOLD로 남긴 경우에만 호출한다. 시드 직후(첫 메서드)는 이미 AVAILABLE 이라 건너뜀.
-        SeatInventory inv = seatInventoryRepository.findById(SEAT_INVENTORY_ID)
-                .orElseThrow(() -> new IllegalStateException("SeatInventory not found. DataInitializer가 실행됐는지 확인하세요."));
-        if (inv.getStatus() != SeatStatus.AVAILABLE) {
-            inv.release();
-            seatInventoryRepository.save(inv);
-        }
+        tx.executeWithoutResult(status -> {
+            SeatInventory inv = seatInventoryRepository.findById(seatInventoryId)
+                    .orElseThrow(() -> new IllegalStateException("SeatInventory 시드 실패 — seedOnce() 확인."));
+            if (inv.getStatus() != SeatStatus.AVAILABLE) {
+                inv.release();
+            }
+            // 기존 예약 삭제(이 좌석에 대한 직전 테스트 잔여)
+            reservationRepository.deleteAll(
+                    reservationRepository.findAll().stream()
+                            .filter(r -> r.getSeatInventory().getId().equals(seatInventoryId))
+                            .toList()
+            );
+        });
 
         // Redis: avail Set에 대상 좌석 1개만 세팅
-        preemptionService.initInventory(SCHEDULE_ID, List.of(SEAT_INVENTORY_ID));
+        preemptionService.initInventory(scheduleId, List.of(seatInventoryId));
+    }
 
-        // 기존 예약 삭제
-        reservationRepository.deleteAll(
-                reservationRepository.findAll().stream()
-                        .filter(r -> r.getSeatInventory().getId().equals(SEAT_INVENTORY_ID))
-                        .toList()
-        );
+    /**
+     * 정합성 검증에 필요한 최소 시드를 <b>컨텍스트(=DB)당 1회</b> 저장하고, 매 호출마다 {@code scheduleId}/
+     * {@code seatInventoryId} 필드를 DB 의 실제 값으로 채운다.
+     *
+     * <p>멱등 판단을 인스턴스 필드가 아니라 <b>DB 존재 여부</b>로 하는 이유: JUnit 은 테스트 메서드마다 클래스
+     * 인스턴스를 새로 만들어 인스턴스 필드가 null 로 리셋되지만, {@code create-drop} DB 와 컨텍스트 캐시는 클래스
+     * 전체에서 1세트만 유지된다. 따라서 "이미 시드됨"은 DB 로 판정해야 두 번째 메서드의 중복 INSERT(UNIQUE 충돌)를 막는다.
+     *
+     * <p>구성: train/schedule/seat/seat_inventory 각 1건 + user 1..{@value USER_COUNT}. id 는 {@code @GeneratedValue}
+     * 에 맡겨 실제 값을 필드에 담는다 — 하드코딩 id 가 다른 통합 테스트의 시드와 충돌하지 않게 한다.
+     *
+     * <p>JdbcTemplate 직접 INSERT 가 아니라 <b>도메인 엔티티 + JPA</b>로 저장하는 이유: {@code @CreationTimestamp}
+     * (User.createdAt)·FK 정합성·{@code @Version} 등 엔티티 라이프사이클이 보장하는 불변식을 손으로 재현하지 않기 위함.
+     * 시드가 도메인 모델과 한 소스라 모델 변경 시 컴파일러가 깨짐을 잡는다.
+     *
+     * <p>user 가 {@code USER_COUNT} 만큼 필요한 이유: 어느 userId 가 선점 경쟁에서 이길지 비결정적인데, 승자의
+     * {@code Reservation.user_id} FK 가 실제 user 행을 참조해야 하기 때문이다(나머지는 선점 패배라 INSERT 없음).
+     */
+    private void seedOnce() {
+        tx.executeWithoutResult(status -> {
+            SeatInventory inv = seatInventoryRepository.findAll().stream().findFirst().orElseGet(() -> {
+                Train train = new Train("KTX-1", "KTX-001");
+                em.persist(train);
+                Schedule schedule = new Schedule(train, "서울", "부산",
+                        LocalDateTime.of(2026, 12, 1, 8, 0), LocalDateTime.of(2026, 12, 1, 10, 30), 1);
+                em.persist(schedule);
+                Seat seat = new Seat(train, 1, "1A");
+                em.persist(seat);
+                SeatInventory seeded = new SeatInventory(schedule, seat);
+                em.persist(seeded);
+
+                IntStream.rangeClosed(1, USER_COUNT)
+                        .forEach(i -> em.persist(new User("user" + i + "@ktx.test", "user" + i)));
+
+                em.flush();
+                return seeded;
+            });
+            scheduleId = inv.getSchedule().getId();
+            seatInventoryId = inv.getId();
+        });
     }
 
     @Test
@@ -67,7 +123,7 @@ class ConcurrencyPocTest extends AbstractIntegrationTest {
         Queue<Throwable> unexpected = new ConcurrentLinkedQueue<>();
 
         runConcurrently(THREAD_COUNT, userId ->
-                bookingService.bookSeat(userId, SCHEDULE_ID, SEAT_INVENTORY_ID),
+                bookingService.bookSeat(userId, scheduleId, seatInventoryId),
                 successCount, failCount, unexpected
         );
 
@@ -82,7 +138,7 @@ class ConcurrencyPocTest extends AbstractIntegrationTest {
         Queue<Throwable> unexpected = new ConcurrentLinkedQueue<>();
 
         runConcurrently(THREAD_COUNT, userId ->
-                lockBookingService.bookSeat(userId, SCHEDULE_ID, SEAT_INVENTORY_ID),
+                lockBookingService.bookSeat(userId, scheduleId, seatInventoryId),
                 successCount, failCount, unexpected
         );
 
@@ -101,13 +157,13 @@ class ConcurrencyPocTest extends AbstractIntegrationTest {
         assertThat(successCount.get()).isEqualTo(1);
         assertThat(failCount.get()).isEqualTo(THREAD_COUNT - 1);
 
-        long heldOrSoldCount = seatInventoryRepository.countByScheduleIdAndStatus(SCHEDULE_ID, SeatStatus.HELD)
-                + seatInventoryRepository.countByScheduleIdAndStatus(SCHEDULE_ID, SeatStatus.SOLD);
+        long heldOrSoldCount = seatInventoryRepository.countByScheduleIdAndStatus(scheduleId, SeatStatus.HELD)
+                + seatInventoryRepository.countByScheduleIdAndStatus(scheduleId, SeatStatus.SOLD);
         assertThat(heldOrSoldCount)
                 .as("좌석 점유는 정확히 1건 (oversell=0)")
                 .isEqualTo(1);
 
-        assertThat(reservationRepository.countBySeatInventoryId(SEAT_INVENTORY_ID))
+        assertThat(reservationRepository.countBySeatInventoryId(seatInventoryId))
                 .as("동일 좌석 예약은 정확히 1건 (중복 예약=0)")
                 .isEqualTo(1);
     }

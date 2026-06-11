@@ -1,14 +1,15 @@
 package com.ktx.ticketing.booking;
 
 import com.ktx.ticketing.booking.ReconciliationService.DriftReport;
-import com.ktx.ticketing.domain.SeatInventoryRepository;
+import com.ktx.ticketing.domain.*;
 import com.ktx.ticketing.support.AbstractIntegrationTest;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -29,7 +30,11 @@ class ReconciliationIntegrationTest extends AbstractIntegrationTest {
     @Autowired private SeatPreemption preemption;
     @Autowired private SeatInventoryRepository seatInventoryRepository;
     @Autowired private StringRedisTemplate redis;
-    @Autowired private JdbcTemplate jdbc;
+    @Autowired private EntityManager em;
+    @Autowired private TransactionTemplate tx;
+
+    private static final java.util.concurrent.atomic.AtomicInteger UNIQUE =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     private long scheduleId;
     private List<Long> seatIds; // 이 스케줄의 AVAILABLE 좌석 inventory id 3개
@@ -37,16 +42,24 @@ class ReconciliationIntegrationTest extends AbstractIntegrationTest {
     @BeforeEach
     void setUpControlledWorld() {
         // 과거 출발 스케줄(백그라운드 reconcile 대상에서 제외) + 좌석 3개를 AVAILABLE 로 시드.
+        // 도메인 엔티티 + JPA 로 저장해 FK 정합성(seat 부모행)·@Version 등을 라이프사이클에 맡긴다.
+        // train_number 는 UNIQUE 이고 @AfterEach 가 DB 를 비우지 않으므로(컨텍스트 캐시로 DB 공유) 매 메서드
+        // 고유 값을 부여해 중복 INSERT 충돌을 피한다. 각 메서드는 자신만의 train/schedule/좌석 세계를 갖는다.
+        String trainNo = "KTX-rec-" + UNIQUE.incrementAndGet();
         LocalDateTime past = LocalDateTime.of(2020, 1, 1, 8, 0);
-        jdbc.update("""
-                INSERT INTO schedule(train_id, departure_station, arrival_station, departure_time, arrival_time, total_seats)
-                VALUES (1, '서울', '대전', ?, ?, 3)
-                """, past, past.plusHours(1));
-        scheduleId = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
-        for (long seatId : List.of(1L, 2L, 3L)) {
-            jdbc.update("INSERT INTO seat_inventory(schedule_id, seat_id, status, version) VALUES (?, ?, 'AVAILABLE', 0)",
-                    scheduleId, seatId);
-        }
+        tx.executeWithoutResult(status -> {
+            Train train = new Train("KTX-1", trainNo);
+            em.persist(train);
+            Schedule schedule = new Schedule(train, "서울", "대전", past, past.plusHours(1), 3);
+            em.persist(schedule);
+            for (int n = 1; n <= 3; n++) {
+                Seat seat = new Seat(train, 1, "rec-" + n);
+                em.persist(seat);
+                em.persist(new SeatInventory(schedule, seat));
+            }
+            em.flush();
+            scheduleId = schedule.getId();
+        });
         seatIds = seatInventoryRepository.findAvailableIdsByScheduleId(scheduleId);
         assertThat(seatIds).hasSize(3);
 
