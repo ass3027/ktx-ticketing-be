@@ -23,7 +23,6 @@ import org.springframework.test.context.ActiveProfiles;
  *       대용량 시드(50k)를 끌어들이지 않는 자급자족 방식이 더 결정적이다.</li>
  * </ul>
  */
-//TODO 이거 굳이 abstract class 로?
 @SpringBootTest
 @ActiveProfiles("test")
 @Import(ContainersConfig.class)

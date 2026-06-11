@@ -61,7 +61,6 @@ class ConcurrencyPocTest extends AbstractIntegrationTest {
             if (inv.getStatus() != SeatStatus.AVAILABLE) {
                 inv.release();
             }
-            // 기존 예약 삭제(이 좌석에 대한 직전 테스트 잔여)
             reservationRepository.deleteAll(
                     reservationRepository.findAll().stream()
                             .filter(r -> r.getSeatInventory().getId().equals(seatInventoryId))
@@ -69,7 +68,6 @@ class ConcurrencyPocTest extends AbstractIntegrationTest {
             );
         });
 
-        // Redis: avail Set에 대상 좌석 1개만 세팅
         preemptionService.initInventory(scheduleId, List.of(seatInventoryId));
     }
 
