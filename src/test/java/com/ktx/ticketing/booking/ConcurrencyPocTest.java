@@ -36,6 +36,8 @@ class ConcurrencyPocTest extends AbstractIntegrationTest {
     static final int THREAD_COUNT = 1000;
     /** userId 순환 범위(runConcurrently 의 (i % USER_COUNT)+1)와 일치 — 이 수만큼 user 행을 시드한다. */
     static final int USER_COUNT = 10_000;
+    /** 이 테스트 전용 train_number — 컨텍스트 공유 DB 에서 자기 시드만 식별하기 위한 격리 키. */
+    static final String POC_TRAIN_NO = "KTX-poc-001";
 
     @Autowired BookingService bookingService;
     @Autowired LockBookingService lockBookingService;
@@ -78,6 +80,9 @@ class ConcurrencyPocTest extends AbstractIntegrationTest {
      * <p>멱등 판단을 인스턴스 필드가 아니라 <b>DB 존재 여부</b>로 하는 이유: JUnit 은 테스트 메서드마다 클래스
      * 인스턴스를 새로 만들어 인스턴스 필드가 null 로 리셋되지만, {@code create-drop} DB 와 컨텍스트 캐시는 클래스
      * 전체에서 1세트만 유지된다. 따라서 "이미 시드됨"은 DB 로 판정해야 두 번째 메서드의 중복 INSERT(UNIQUE 충돌)를 막는다.
+     * 판정은 <b>이 테스트 고유 train_number</b>({@value POC_TRAIN_NO})로 한정한다 — 컨텍스트 캐시를 공유하는 다른
+     * 통합 테스트(BookingIntegrationTest 등)가 만든 SeatInventory 를 자기 것으로 오인하면 user 시드를 건너뛰어
+     * FK 위반·엉뚱한 scheduleId 집계(oversell 오판)가 나기 때문이다.
      *
      * <p>구성: train/schedule/seat/seat_inventory 각 1건 + user 1..{@value USER_COUNT}. id 는 {@code @GeneratedValue}
      * 에 맡겨 실제 값을 필드에 담는다 — 하드코딩 id 가 다른 통합 테스트의 시드와 충돌하지 않게 한다.
@@ -91,8 +96,12 @@ class ConcurrencyPocTest extends AbstractIntegrationTest {
      */
     private void seedOnce() {
         tx.executeWithoutResult(status -> {
-            SeatInventory inv = seatInventoryRepository.findAll().stream().findFirst().orElseGet(() -> {
-                Train train = new Train("KTX-1", "KTX-001");
+            SeatInventory inv = em.createQuery(
+                            "SELECT si FROM SeatInventory si WHERE si.schedule.train.trainNumber = :no",
+                            SeatInventory.class)
+                    .setParameter("no", POC_TRAIN_NO)
+                    .getResultStream().findFirst().orElseGet(() -> {
+                Train train = new Train("KTX-1", POC_TRAIN_NO);
                 em.persist(train);
                 Schedule schedule = new Schedule(train, "서울", "부산",
                         LocalDateTime.of(2026, 12, 1, 8, 0), LocalDateTime.of(2026, 12, 1, 10, 30), 1);
