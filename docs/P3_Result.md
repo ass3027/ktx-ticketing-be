@@ -22,7 +22,7 @@
 | T3-9 HELD TTL 만료 스케줄러 | ✅ | sweep 건별 트랜잭션, 커밋 후 SADD+DECR |
 | T3-9b 시간 소스(Clock) 단일화 | ✅ | confirm/cancel/expire `now(clock)` |
 | T3-10 Redis-DB reconcile 잡 | ✅ | 선점 Lua ts 마커(갈래 1) + avail↔DB 수렴, active 분리 |
-| T3-11 통합 테스트(정합성 자동화) | ⬜ | |
+| T3-11 통합 테스트(정합성 자동화) | ✅ | `BookingIntegrationTest` 서비스 계층 E2E 8건, M3 완료 |
 
 ---
 
@@ -432,3 +432,51 @@ POST /api/reservations   header: X-Entry-Token: {token}   body: { mode, seatInve
 - `compileJava`/`compileTestJava` ✅
 - 단위 테스트(`ReconciliationServiceTest` 5종 외) ✅
 - 통합 테스트(`RedisSetPreemptionLuaTest`·`ReconciliationIntegrationTest`)는 로컬 Docker 미기동으로 **CI(GitHub Actions)에서 실행**
+
+---
+
+## T3-11 — 통합 테스트(정합성 자동화) (2026-06-12)
+
+### 결정
+P3 의 정합성 보장(T3-3~T3-10)을 **서비스 계층 통합 테스트** 한 곳으로 묶어 M3 DoD(정상 E2E + 예외 6종)를
+자동 검증한다. 신규 프로덕션 코드는 없다. 실 MySQL/Redis(Testcontainers, `AbstractIntegrationTest`)에서
+`AdmissionService`→`BookingService`→`ReservationLifecycleService`/`HeldExpiryService` 흐름을 직접 구동해
+**좌석 상태 / 가용 풀(avail) / 활성자(active) 카운터 동기화**를 한 흐름으로 단언한다.
+
+### 범위 판단 (기존 자산과 중복 회피)
+- 동시 1,000요청 oversell=0·중복=0 → `ConcurrencyPocTest` 가 이미 통합 검증 → **재작성 안 함**
+- reconcile 수렴·in-flight 보존 → `ReconciliationIntegrationTest` 이미 검증 → **재작성 안 함**
+- HTTP 401/429 매핑 → 컨트롤러 슬라이스(`BookingControllerTest`/`ReservationControllerTest`) 커버 →
+  여기선 예외를 **발생 지점**(서비스 반환값·`AdmissionResult`·토큰 해석 실패)에서 확인
+- 실질 신규 가치: ① 입장→예매→확정 **E2E + 상태 동기화** ② **만료 sweep 의 실DB+Redis 연동**
+  (기존 `HeldExpiryServiceTest` 는 mock 단위라 미검증) ③ 취소 복구 ④ 예외 6종 발생 지점
+
+### 설계 판단
+- **만료를 결정적으로 재현**: `Reservation.HELD_TTL`(5분) 고정이므로, HELD 생성 후 `HELD_TTL+60s` 이후
+  시각을 가진 `HeldExpiryService` 를 **생성자로 직접 조립**(컨텍스트 협력자 + 미래 Clock)해 `sweep()` 호출.
+  프로덕션 Clock 빈 무수정 → 다른 테스트 무영향. sweep Clock 의 zone 은 `systemDefault` 로 맞춘다 —
+  `expiresAt` 이 프로덕션 Clock(KST)으로 저장되므로 UTC 고정 시 9h skew 로 만료 판정이 어긋난다.
+- **컨텍스트 공유 DB 격리**: 각 메서드가 고유 `train_number`(`KTX-it-{seq}`)로 자기 세계(schedule/seat×3/
+  user×3)를 시드. 전역 단언(`reservationRepository.count()`)은 다른 테스트 잔여에 오염되므로 **스케줄 스코프**
+  로 본다. 만료 sweep 은 잔여 HELD 까지 처리할 수 있어(정상) 건수는 `≥1`, 결정성은 좌석/예약 스코프 단언이 담당.
+
+### 부수 수정 (`ConcurrencyPocTest` 시드 격리)
+`seedOnce()` 의 멱등 판정이 `seatInventoryRepository.findAll().findFirst()` 라, 컨텍스트 캐시를 공유하는
+`BookingIntegrationTest` 가 만든 SeatInventory 를 자기 것으로 오인 → user 시드를 건너뛰어 **FK 위반** +
+엉뚱한 scheduleId 집계로 **oversell 오판**이 났다. 판정을 **고유 train_number(`KTX-poc-001`)** 로 한정해 격리.
+기존엔 SeatInventory 를 만드는 통합 테스트가 자신뿐이라 드러나지 않던 취약 가정을 노출·교정.
+
+### 테스트 (`BookingIntegrationTest`, 서비스 계층 통합 8건)
+| # | 케이스 | 검증 |
+|---|--------|------|
+| 1 | 정상 E2E(SEAT) | 입장(active+1)→bookSeat(HELD, avail−1)→confirm(SOLD, CONFIRMED, active−1) |
+| 2 | 정상 E2E(AUTO) | bookAuto 임의 좌석 HELD→confirm SOLD, avail/active 동기화 |
+| 3 | §3.4 취소 | HELD→cancel→좌석 AVAILABLE·CANCELLED·avail 복귀·active−1 |
+| 4 | §3.3 만료 | 미래 Clock sweep→EXPIRED·좌석 AVAILABLE·avail 복귀·active−1 (실DB+Redis 연동) |
+| 5 | §3.1 매진 | avail 빈 스케줄 bookAuto→`SoldOut`, 예약 0 |
+| 6 | §3.1 경쟁 패배 | 선점된 좌석 bookSeat→`SeatTaken`, HELD 1건(oversell=0) |
+| 7 | §3.2 입장 초과 | K 까지 Admitted, K+1=`Rejected(retryAfter)`, active=K(롤백) |
+| 8 | §3.5 토큰 없음 | 무효 토큰 `resolve`→null(예매 게이트 차단 근거) |
+
+### 검증 결과
+- `BookingIntegrationTest` 8건 ✅ + 전체 회귀 **103건 통과**(로컬 Docker Testcontainers) ✅

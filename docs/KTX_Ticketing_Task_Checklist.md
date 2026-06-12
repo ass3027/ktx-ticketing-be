@@ -12,11 +12,11 @@
 | P0 셋업 | 4 | 4 | 100% | — |
 | P1 설계 확정 | 6 | 6 | 100% | M1 ✅ |
 | P2 핵심 PoC | 5 | 5 | 100% | M2 ✅ |
-| P3 기능 구현 | 13 | 12 | 92% | M3 |
+| P3 기능 구현 | 13 | 13 | 100% | M3 ✅ |
 | P4 성능 측정 | 12 | 0 | 0% | M4 |
 | P5 비동기 | 3 | 0 | 0% | — |
 | P6 산출물 | 10 | 0 | 0% | M5 |
-| **합계** | **53** | **27** | **51%** | |
+| **합계** | **53** | **28** | **53%** | |
 
 ---
 
@@ -59,8 +59,8 @@
 - [x] **T3-9** HELD TTL 만료 스케줄러 → 좌석/카운터/`avail` 복구 → `HeldExpiryScheduler`(`@Scheduled`, 30s)→`HeldExpiryService.sweep`. `findExpiredHeldIds`(HELD+만료, batchSize bound) 건별 독립 트랜잭션으로 `expire`(상태 재확인→HELD→EXPIRED+좌석 AVAILABLE), 커밋 후 `returnSeat`(SADD)+`leave`(DECR)을 **실제 만료 시에만**. 경합(사용자 confirm/cancel)은 상태 재확인+`@Version`으로 흡수→분산락 불필요. T3-8과 동일 정합성 패턴.
 - [x] **T3-9b** 시간 소스 단일화 → `Reservation.confirm/cancel/expire`를 `now(clock)`로 통일(`hold`와 동일 패턴), `ReservationLifecycleTransactionHelper`에 `Clock` 주입. `SeatInventory`는 이미 시각 주입식(`markHeld`), `BookingTransactionHelper`도 이미 `Clock` 보유라 무변경. 효과: 만료 판정·타임스탬프 결정적 → `ReservationTest` 단언 `isNotNull`→`isEqualTo(고정시각)` 강화.
 - [x] **T3-10** Redis-DB reconcile 잡: `avail` 드리프트 주기 보정 → DB(SoT)로 수렴. §10 열린 결정 확정 → **갈래 1**(좌석별 Redis 선점시각 마커, 선점과 Lua 원자화)·**active 분리**(별도 follow-up). 방향 비대칭: stale `SREM`=상시 안전, missing `SADD`=`now−preempt_ts>grace`(in-flight 아님)일 때만 → 오버셀 차단. `ReconciliationService`/`Scheduler`/`ReconcileProperties`(interval 60s·grace 5m), 대상=미출발 스케줄. 잔여석은 SCARD 파생 자동 수렴. 단위 5+통합 6(Lua 4·수렴 2). 결과: `P3_Result.md`.
-- [ ] **T3-11** 통합 테스트(정합성 자동화): 중복/초과/만료복구 + reconcile 수렴 검증
-- **DoD(M3)**: 정상 16단계 E2E + 예외 6종 처리
+- [x] **T3-11** 통합 테스트(정합성 자동화): 중복/초과/만료복구 + reconcile 수렴 검증 → `BookingIntegrationTest`(서비스 계층 통합 8건): 정상 E2E(SEAT/AUTO 입장→예매→확정) + 예외 6종(매진/경쟁패배/입장초과/취소/만료/토큰없음). 좌석·avail·active 동기화 단언. 동시성(`ConcurrencyPocTest`)·reconcile 수렴(`ReconciliationIntegrationTest`)은 기존 통합 테스트 재사용, HTTP 401/429 매핑은 컨트롤러 슬라이스가 커버 → 중복 회피. 만료는 미래 Clock sweep 직접 조립(zone=systemDefault로 KST skew 회피). 부수: `ConcurrencyPocTest` 시드 멱등 판정을 `findFirst`→고유 train_number 한정으로 격리(컨텍스트 공유 DB FK위반·oversell 오판 교정). 전체 회귀 103건 통과.
+- **DoD(M3)**: 정상 16단계 E2E + 예외 6종 처리 ✅
 
 ## P4. 성능 측정 → 🏁 M4
 - [ ] **T4-1** 부하 환경 구축(k6/nGrinder)
