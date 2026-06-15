@@ -17,3 +17,7 @@ booking:
   reconcile:
     interval: 1h          # 토글 off 라 미발화. 플레이스홀더 해석용.
   # admission.*, expiry.batch-size, reconcile.preempt-grace 등 나머지는 메인 application.yml 에서 상속.
+
+logging:
+  level:
+    org.hibernate.tool.schema: ERROR  # create-drop 시작 시 양성 WARN(없는 테이블 FK drop) 억제
