@@ -193,10 +193,8 @@ class BookingIntegrationTest extends AbstractIntegrationTest {
         long reservationId = ((BookingResult.Success) booked).reservation().getId();
         assertThat(seatStatus(targetSeat)).isEqualTo(SeatStatus.HELD);
 
-        // HELD_TTL(5분) 이후 시각을 가진 sweep 오케스트레이터를 직접 조립해 만료를 결정적으로 재현한다.
-        // 프로덕션 Clock 빈은 건드리지 않아 다른 테스트에 영향이 없다. 협력자는 컨텍스트 빈을 그대로 재사용.
-        // expiresAt 은 프로덕션 Clock(systemDefaultZone) 으로 저장되므로 sweep Clock 의 zone 도 일치시켜야
-        // LocalDateTime 비교(expiresAt < now)가 어긋나지 않는다(UTC 로 고정하면 KST 와 9h skew 발생).
+        // zone 은 systemDefault 필수: expiresAt(naive LocalDateTime)이 프로덕션 Clock(systemDefaultZone)으로
+        // 저장되므로, UTC 로 고정하면 KST 와 9h skew 가 생겨 expiresAt<now 비교가 어긋난다(B-1 으로 해소 예정).
         Clock future = Clock.fixed(
                 Instant.now().plus(Reservation.HELD_TTL).plusSeconds(60), ZoneId.systemDefault());
         HeldExpiryService futureSweeper = new HeldExpiryService(
