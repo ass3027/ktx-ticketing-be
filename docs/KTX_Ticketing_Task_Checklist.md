@@ -106,6 +106,12 @@
 
 ---
 
+## 기술 부채 / 개선 백로그 (페이즈 외 · 여유 시 처리)
+> 특정 페이즈 DoD 에 속하지 않는 후속 개선. 착수 시 독립 브랜치 + 계획 승인.
+- [ ] **B-1** 시스템 사건 시각 필드 `LocalDateTime` → `Instant` 전환 (zone 의존 제거) — 대상: `Reservation`(heldAt/expiresAt/confirmedAt/cancelledAt)·`SeatInventory`(heldAt/expiresAt)·`User.createdAt` 등 "절대 시각" 필드. **운행 일정(`Schedule.departureTime/arrivalTime`)은 KST 벽시계 표시 의미라 `LocalDateTime` 유지**(전환 대상 아님). 동기: 현재 `expiresAt`(naive `LocalDateTime`)을 프로덕션 `Clock.systemDefaultZone()`으로 찍어 저장·비교 → 저장·비교 zone 이 같아야만 정합(단일 서버에선 동작하나 OS zone 변경/DST·UTC 고정 리팩터링 시 9h skew 로 `expiresAt<now` 오판 위험). `Instant` 는 절대 시각이라 비교에서 zone 이 소거됨 → `BookingIntegrationTest` sweep Clock 의 zone 주석(systemDefault 강제) 자체가 불필요해짐. 범위: 엔티티 4종 + DB 컬럼 타입(`DATETIME`→`TIMESTAMP`/마이그레이션) + 쿼리(`findExpiredHeldIds` 등) + DTO(`expiresAt` 노출 형식) + 기존 테스트. `Clock.instant()` 를 시각 출처로 사용(현재 `LocalDateTime.now(clock)` 에서 한 단계 축약).
+
+---
+
 ## 제출 전 셀프 체크리스트 (평가기준 7항목)
 - [ ] **C1** 왜 이 주제인지 한 문장 설명 가능
 - [ ] **C2** 직접 설정한 품질 기준·측정 수치 보유
