@@ -42,3 +42,15 @@ booking:
     interval: 60s
     # 이 시간 이내 선점된 missing 좌석은 [SREM~커밋] in-flight 로 보고 SADD 건너뜀(>최대 트랜잭션 소요).
     preempt-grace: 5m
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    prometheus:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
