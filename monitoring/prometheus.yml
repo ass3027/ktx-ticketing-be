@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 5s     # 부하 테스트용 — 빠른 수집 주기
+
+scrape_configs:
+  - job_name: ktx-app
+    static_configs:
+      - targets: ['app:8080']
+    metrics_path: /actuator/prometheus

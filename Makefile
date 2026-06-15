@@ -2,8 +2,18 @@
 # 전제: k6 로컬 설치, Docker Compose 앱 기동 중
 # k6 내장 대시보드: http://localhost:5665 (K6_WEB_DASHBOARD=true)
 
-.PHONY: reset-seed run-L1 run-L2 run-L2b run-L3 run-L4 run-L5 run-L6 \
+.PHONY: reset-seed up-monitoring down-monitoring \
+        run-L1 run-L2 run-L2b run-L3 run-L4 run-L5 run-L6 \
         run-E1-before run-E1-after run-E2-before run-E2-after run-E3-before run-E3-after
+
+# ── 모니터링 스택 ──────────────────────────────────────────────────────────────
+# Prometheus: http://localhost:9090  |  Grafana: http://localhost:3000 (admin/admin)
+
+up-monitoring:
+	docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up --build -d
+
+down-monitoring:
+	docker compose -f docker-compose.yml -f docker-compose.monitoring.yml down
 
 reset-seed:
 	bash load-tests/seed/reset.sh
