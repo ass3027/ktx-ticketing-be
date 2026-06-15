@@ -17,19 +17,19 @@ import com.ktx.ticketing.domain.SeatStatus;
 import com.ktx.ticketing.domain.Train;
 import com.ktx.ticketing.domain.User;
 import com.ktx.ticketing.support.AbstractIntegrationTest;
+import com.ktx.ticketing.support.MutableClock;
+import com.ktx.ticketing.support.TestClockConfig;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.Clock;
-import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -52,6 +52,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@link AdmissionService#tryEnter}만 사용하고(스토어 직접 발급 X), 세션의 userId 로 예매/확정/취소를 호출해
  * 신뢰 경계를 지킨다.
  */
+@Import(TestClockConfig.class)
 class BookingIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired AdmissionService admissionService;
@@ -61,8 +62,7 @@ class BookingIntegrationTest extends AbstractIntegrationTest {
     @Autowired HeldExpiryService heldExpiryService;
     @Autowired SeatPreemption preemption;
     @Autowired EntryTokenStore tokenStore;
-    @Autowired ExpiryProperties expiryProperties;
-    @Autowired ReservationLifecycleTransactionHelper txHelper;
+    @Autowired MutableClock mutableClock;
     @Autowired SeatInventoryRepository seatInventoryRepository;
     @Autowired ReservationRepository reservationRepository;
     @Autowired EntityManager em;
@@ -102,6 +102,8 @@ class BookingIntegrationTest extends AbstractIntegrationTest {
 
         // 가용 풀(Redis)을 DB 와 일치하는 baseline 으로 초기화.
         preemption.initInventory(scheduleId, seatIds);
+        // 테스트 간 시각 오염 방지: 매 테스트 전 START 로 리셋.
+        mutableClock.reset(TestClockConfig.START);
     }
 
     @AfterEach
@@ -193,18 +195,13 @@ class BookingIntegrationTest extends AbstractIntegrationTest {
         long reservationId = ((BookingResult.Success) booked).reservation().getId();
         assertThat(seatStatus(targetSeat)).isEqualTo(SeatStatus.HELD);
 
-        // zone 은 systemDefault 필수: expiresAt(naive LocalDateTime)이 프로덕션 Clock(systemDefaultZone)으로
-        // 저장되므로, UTC 로 고정하면 KST 와 9h skew 가 생겨 expiresAt<now 비교가 어긋난다(B-1 으로 해소 예정).
-        Clock future = Clock.fixed(
-                Instant.now().plus(Reservation.HELD_TTL).plusSeconds(60), ZoneId.systemDefault());
-        HeldExpiryService futureSweeper = new HeldExpiryService(
-                reservationRepository, txHelper, preemption, admissionService,
-                expiryProperties, future);
+        // MutableClock 을 HELD_TTL + 여유 1분 앞당겨 heldExpiryService 가 만료 대상으로 인식하게 한다.
+        // expiresAt 은 mutableClock(systemDefault zone) 기준으로 저장됐으므로 zone skew 없음.
+        mutableClock.advance(Reservation.HELD_TTL.plusSeconds(60));
+        int expired = heldExpiryService.sweep();
 
-        int expired = futureSweeper.sweep();
-
-        // 미래 Clock sweep 은 컨텍스트 공유 DB 의 다른 테스트 잔여 HELD 까지 만료시킬 수 있으므로(정상 동작)
-        // 건수는 "최소 1" 로만 보고, 결정적 검증은 이 테스트가 만든 좌석/예약 스코프 단언으로 한다.
+        // sweep 은 컨텍스트 공유 DB 의 타 테스트 잔여 HELD 도 만료시킬 수 있으므로 건수는 "최소 1" 로만 확인.
+        // 결정적 정합성 단언은 이 테스트의 좌석/예약 스코프로 한정한다.
         assertThat(expired).isGreaterThanOrEqualTo(1);
         assertThat(seatStatus(targetSeat)).isEqualTo(SeatStatus.AVAILABLE);
         assertThat(reservationStatus(reservationId)).isEqualTo(ReservationStatus.EXPIRED);
@@ -252,8 +249,8 @@ class BookingIntegrationTest extends AbstractIntegrationTest {
     // --- §3.2 입장 초과 ---
 
     @Test
-    @DisplayName("§3.2 입장 초과: 활성자 ≥ K → Rejected(Retry-After)")
-    void admission_상한초과시_Rejected() {
+    @DisplayName("§3.2 입장 초과: 활성자 ≥ K → Rejected(Retry-After), 퇴장 후 재입장 허용")
+    void admission_상한초과시_Rejected_퇴장후_재입장_허용() {
         int k = admissionProperties.maxActive();
         // 한도(K)까지 입장 — 모두 Admitted.
         for (int i = 0; i < k; i++) {
@@ -268,6 +265,17 @@ class BookingIntegrationTest extends AbstractIntegrationTest {
         assertThat(activeCount())
                 .as("거절은 INCR 을 롤백하므로 활성자는 K 를 넘지 않는다")
                 .isEqualTo(k);
+
+        // 기존 사용자 1명 퇴장(세션 종료) → 슬롯 반환.
+        admissionService.leave(scheduleId);
+        assertThat(activeCount()).isEqualTo(k - 1);
+
+        // 퇴장 후 재시도 → Admitted(슬롯 회복 확인).
+        AdmissionResult retry = admissionService.tryEnter(scheduleId, (long) (k + 2));
+        assertThat(retry)
+                .as("슬롯이 반환됐으므로 재시도는 Admitted")
+                .isInstanceOf(AdmissionResult.Admitted.class);
+        assertThat(activeCount()).isEqualTo(k);
     }
 
     // --- §3.5 토큰 없음 ---
