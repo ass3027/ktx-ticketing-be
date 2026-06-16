@@ -26,6 +26,16 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+
+# SQL 의 한글 라벨이 docker/mysql 파이프를 거치며 깨지지 않도록 UTF-8 고정.
+# $OutputEncoding   : PowerShell → 네이티브(docker) stdin 으로 보낼 때 바이트 인코딩.
+# [Console]::OutputEncoding : 네이티브 stdout 을 PowerShell 이 문자열로 디코딩할 때 사용.
+# 둘 다 UTF-8(no BOM) 으로 두고, mysql 자체도 --default-character-set=utf8mb4 로 받는다.
+$prevOutputEncoding = $OutputEncoding
+$prevConsoleEncoding = [Console]::OutputEncoding
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+
 Push-Location $repoRoot
 try {
     # post_run_check.sql 에 :변수 가 들어있어 직접 SET 으로 풀어쓴다 (L1 합격 단언 위주).
@@ -59,7 +69,7 @@ WHERE status = 'HELD' AND expires_at < NOW();
 
     $output = @()
     $output += '=== DB 정합성 ==='
-    $output += ($sql | docker compose exec -T mysql mysql -uktx -pktx1234 -t ktx_ticketing)
+    $output += ($sql | docker compose exec -T mysql mysql -uktx -pktx1234 --default-character-set=utf8mb4 -t ktx_ticketing)
     if ($LASTEXITCODE -ne 0) { throw "mysql 정합성 쿼리 실패 (exit $LASTEXITCODE)" }
 
     $output += ''
@@ -77,5 +87,7 @@ WHERE status = 'HELD' AND expires_at < NOW();
     }
 }
 finally {
+    $OutputEncoding = $prevOutputEncoding
+    [Console]::OutputEncoding = $prevConsoleEncoding
     Pop-Location
 }
