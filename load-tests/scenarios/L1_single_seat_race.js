@@ -4,9 +4,17 @@
  * 목적: 1,000 VUser 가 동일 좌석에 동시 SEAT 예매 → 성공 정확히 1건, oversell == 0 (S4)
  * 합격: oversell count == 0, reserve_ok count == 1
  *
- * 부하 후 DB 정합성 수동 확인:
- *   SELECT COUNT(*) FROM reservation WHERE status='HELD' AND seat_inventory_id = <SEAT_INVENTORY_ID>;
- *   -- 결과 = 1 이어야 함
+ * <b>실행 전 준비</b> — `booking.admission.max-active` 가 운영 잠정값(100)이면 1,000 VU 중 ~900
+ * 이 입장 단계에서 429 차단돼 좌석 경쟁 자체가 일어나지 않는다. L1 은 *좌석 선점 정합성* 검증이
+ * 목적이므로 입장 제어를 우회해야 한다. docker-compose 의 app 서비스 환경변수에 일시 추가:
+ *   BOOKING_ADMISSION_MAX_ACTIVE: 2000
+ * 그 뒤 `docker compose up -d --force-recreate app` 으로 컨테이너 재기동. L4 측정 시 원복.
+ *
+ * <b>반복 실행 시</b> — 첫 회는 정상 경쟁(1명 win, 999명 SeatTaken)이지만 좌석이 이미 HELD 라
+ * 두 번째 회부턴 전부 SeatTaken 만 나온다. 매 회 측정 전 `make reset-seed && docker compose
+ * restart app` 으로 DB/Redis 초기화하고 DataInitializer 재시드해야 한다.
+ *
+ * 부하 후 DB/Redis 정합성: `load-tests/verify/post_run_check.sql` ①·④번 + redis-cli 안내 참조.
  */
 import http from 'k6/http';
 import { check } from 'k6';

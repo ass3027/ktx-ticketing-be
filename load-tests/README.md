@@ -28,6 +28,62 @@ make run-L6    # 지속 부하 30분 (누수 확인)
 
 k6 내장 대시보드: http://localhost:5665
 
+### L1 실행 절차 (T4-3)
+
+L1 은 *좌석 선점 정합성* 검증이라 입장 제어를 우회해야 1,000 VU 가 좌석 경쟁까지
+도달한다. 운영 잠정값(`max-active=100`)으로 두면 ~900 이 429 에서 차단된다.
+
+#### Windows / PowerShell 자동화 (권장)
+
+PowerShell 스크립트(`load-tests/scripts/`)가 reset+restart+health-wait+k6+정합성 검증을
+한 번에 처리한다. `make`/`bash` 불필요, mysql/redis-cli 도 컨테이너 경유라 호스트 설치 의존 없음.
+
+1. **K 우회**: `docker-compose.override.yml` 에 `BOOKING_ADMISSION_MAX_ACTIVE: 2000`
+   추가(gitignore 대상, §`docker-compose 오버라이드` 참조) →
+   `docker compose up -d --force-recreate app`.
+2. **본 측정 (기본 3회)** — PowerShell 7 터미널에서:
+   ```powershell
+   ./load-tests/scripts/Run-L1.ps1
+   # 회수 변경: ./load-tests/scripts/Run-L1.ps1 -Iterations 5
+   ```
+   다른 셸(cmd/Git Bash)에서 호출하려면 `pwsh load-tests/scripts/Run-L1.ps1`.
+   실행 정책 차단 시: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` 한 번 또는
+   호출 시 `pwsh -ExecutionPolicy Bypass -File load-tests/scripts/Run-L1.ps1`.
+   각 회 raw 로그(`load-tests/results/L1_run_$i.txt`) + 정합성 결과
+   (`L1_run_$i.check.txt`) 가 누적된다(gitignore).
+3. **결과 표 기입**: `docs/P4_Result.md` T4-3 섹션의 회차별 행에 reserve_ok / oversell /
+   p50·p95·p99 / DB·Redis 단언 결과 기록.
+4. **K 복원**: `docker-compose.override.yml` 삭제 → `docker compose up -d --force-recreate app`.
+
+#### bash/make 사용자 (Linux/macOS/Git Bash)
+
+```bash
+for i in 1 2 3; do
+  make reset-seed && docker compose restart app
+  sleep 10
+  make run-L1 | tee load-tests/results/L1_run_$i.txt
+  mysql -h127.0.0.1 -uktx -pktx1234 ktx_ticketing < load-tests/verify/post_run_check.sql
+  redis-cli SCARD avail:1
+done
+```
+
+합격: 모든 회차에서 oversell=0 / reserve_ok=1 / DB HELD=1 / DB AVAILABLE=999 / SCARD=999.
+
+결과 표는 `docs/P4_Result.md` T4-3 섹션에 누적.
+
+### docker-compose 오버라이드 (K 우회용)
+
+`docker-compose.override.yml` (gitignore 되거나 임시 파일):
+
+```yaml
+services:
+  app:
+    environment:
+      BOOKING_ADMISSION_MAX_ACTIVE: 2000
+```
+
+`docker compose up` 시 자동 머지된다. 측정 종료 후 파일 삭제 또는 값 복원.
+
 ## 실험 Before/After
 
 | 실험 | Before | After |
