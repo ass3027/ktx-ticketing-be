@@ -54,7 +54,9 @@ try {
             # Invoke-RestMethod 사용 — Invoke-WebRequest 는 actuator 의 Content-Type
             # (application/vnd.spring-boot.actuator.v3+json) 을 못 알아봐 Content 를
             # byte[] 로 반환, ConvertFrom-Json 이 깨진다.
-            $health = Invoke-RestMethod -Uri 'http://localhost:8080/actuator/health' -TimeoutSec 2 -ErrorAction Stop
+            # 127.0.0.1 고정 — 'localhost' 는 Windows + Docker Desktop 에서 IPv6(::1) 로 먼저
+            # 해석돼 포트포워딩 미스로 hang(2s 타임아웃) 한다. curl/127.0.0.1 은 즉시 응답.
+            $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/actuator/health' -TimeoutSec 2 -ErrorAction Stop
             $lastStatus = $health.status
             if ($lastStatus -eq 'UP') {
                 $elapsed = [int]((Get-Date) - $start).TotalSeconds
