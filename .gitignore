@@ -43,3 +43,9 @@ Thumbs.db
 # Spring Boot
 application-secret.yml
 application-*.local.yml
+
+# Docker Compose local override (개인 부하 테스트용 env 토글 등, 커밋 금지)
+docker-compose.override.yml
+
+# 부하 테스트 측정 raw 출력 (개인 환경 의존, 결과 표는 docs/P4_Result.md 에 정리)
+load-tests/results/
