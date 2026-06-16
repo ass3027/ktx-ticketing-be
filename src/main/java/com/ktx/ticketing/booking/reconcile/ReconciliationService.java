@@ -1,5 +1,6 @@
-package com.ktx.ticketing.booking;
+package com.ktx.ticketing.booking.reconcile;
 
+import com.ktx.ticketing.booking.SeatPreemption;
 import com.ktx.ticketing.domain.ScheduleRepository;
 import com.ktx.ticketing.domain.SeatInventoryRepository;
 import lombok.RequiredArgsConstructor;

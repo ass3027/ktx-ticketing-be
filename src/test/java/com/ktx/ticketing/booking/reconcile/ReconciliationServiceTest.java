@@ -1,6 +1,7 @@
-package com.ktx.ticketing.booking;
+package com.ktx.ticketing.booking.reconcile;
 
-import com.ktx.ticketing.booking.ReconciliationService.DriftReport;
+import com.ktx.ticketing.booking.SeatPreemption;
+import com.ktx.ticketing.booking.reconcile.ReconciliationService.DriftReport;
 import com.ktx.ticketing.domain.ScheduleRepository;
 import com.ktx.ticketing.domain.SeatInventoryRepository;
 import org.junit.jupiter.api.BeforeEach;

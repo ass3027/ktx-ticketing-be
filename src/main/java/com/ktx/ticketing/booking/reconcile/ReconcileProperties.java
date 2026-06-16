@@ -1,4 +1,4 @@
-package com.ktx.ticketing.booking;
+package com.ktx.ticketing.booking.reconcile;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
