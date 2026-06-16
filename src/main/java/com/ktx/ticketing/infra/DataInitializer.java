@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Profile;
+import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -15,8 +16,12 @@ import java.util.List;
 @Slf4j
 @Component
 @Profile("local")
+@Order(DataInitializer.ORDER)
 @RequiredArgsConstructor
 public class DataInitializer implements ApplicationRunner {
+
+    /** 시드는 avail 워밍업({@link com.ktx.ticketing.booking.reconcile.AvailPoolWarmup}) 보다 먼저 실행돼야 한다. */
+    static final int ORDER = 0;
 
     private final JdbcTemplate jdbc;
 
