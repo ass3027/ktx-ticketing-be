@@ -38,9 +38,9 @@ L1 은 *좌석 선점 정합성* 검증이라 입장 제어를 우회해야 1,00
 PowerShell 스크립트(`load-tests/scripts/`)가 reset+restart+health-wait+k6+정합성 검증을
 한 번에 처리한다. `make`/`bash` 불필요, mysql/redis-cli 도 컨테이너 경유라 호스트 설치 의존 없음.
 
-1. **K 우회**: `docker-compose.override.yml` 에 `BOOKING_ADMISSION_MAX_ACTIVE: 2000`
-   추가(gitignore 대상, §`docker-compose 오버라이드` 참조) →
-   `docker compose up -d --force-recreate app`.
+1. **K 우회**: `./load-tests/scripts/Set-AdmissionOverride.ps1 -On` — `docker-compose.override.yml`
+   생성(`BOOKING_ADMISSION_MAX_ACTIVE: 2000`, gitignore 대상) + app force-recreate + health 대기를
+   한 번에 처리(§`docker-compose 오버라이드` 참조). 상한값 조정: `-MaxActive 5000`.
 2. **본 측정 (기본 3회)** — PowerShell 7 터미널에서:
    ```powershell
    ./load-tests/scripts/Run-L1.ps1
@@ -53,7 +53,8 @@ PowerShell 스크립트(`load-tests/scripts/`)가 reset+restart+health-wait+k6+�
    (`L1_run_$i.check.txt`) 가 누적된다(gitignore).
 3. **결과 표 기입**: `docs/P4_Result.md` T4-3 섹션의 회차별 행에 reserve_ok / oversell /
    p50·p95·p99 / DB·Redis 단언 결과 기록.
-4. **K 복원**: `docker-compose.override.yml` 삭제 → `docker compose up -d --force-recreate app`.
+4. **K 복원**: `./load-tests/scripts/Set-AdmissionOverride.ps1 -Off` — override 삭제 + app
+   force-recreate + health 대기 (운영 K 값 복원).
 
 #### bash/make 사용자 (Linux/macOS/Git Bash)
 
@@ -73,7 +74,17 @@ done
 
 ### docker-compose 오버라이드 (K 우회용)
 
-`docker-compose.override.yml` (gitignore 되거나 임시 파일):
+L1 측정 시 입장 제어(K) 상한을 우회하려면 `docker-compose.override.yml` 이 필요하다(gitignore 대상).
+`Set-AdmissionOverride.ps1` 이 생성/삭제 + app recreate + health 대기를 토글로 처리한다:
+
+```powershell
+./load-tests/scripts/Set-AdmissionOverride.ps1 -On            # 우회 활성 (max-active=2000)
+./load-tests/scripts/Set-AdmissionOverride.ps1 -On -MaxActive 5000
+./load-tests/scripts/Set-AdmissionOverride.ps1 -Off           # 운영값 복원 (override 삭제)
+```
+
+스크립트 없이 수동으로 할 경우 — `docker-compose.override.yml` 을 다음 내용으로 두면
+`docker compose up` 시 자동 머지된다(측정 종료 후 파일 삭제 또는 값 복원):
 
 ```yaml
 services:
@@ -81,8 +92,6 @@ services:
     environment:
       BOOKING_ADMISSION_MAX_ACTIVE: 2000
 ```
-
-`docker compose up` 시 자동 머지된다. 측정 종료 후 파일 삭제 또는 값 복원.
 
 ## 실험 Before/After
 
