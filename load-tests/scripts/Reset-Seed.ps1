@@ -72,7 +72,7 @@ try {
             Write-Host "  ...${elapsed}s 경과 ($statusInfo)" -ForegroundColor DarkGray
             $nextProgress += 15
         }
-        Start-Sleep -Seconds 3
+        Start-Sleep -Seconds 1
     }
     $statusInfo = if ($lastStatus) { "마지막 status=$lastStatus" } else { "마지막 오류=$lastErr" }
     throw "health UP 대기 시간 초과 (${HealthWaitSeconds}s). $statusInfo. `docker compose logs app` 확인 권장."
