@@ -8,7 +8,9 @@ import org.springframework.stereotype.Service;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -64,17 +66,24 @@ public class ReconciliationService {
         }
 
         // missing: DB有 Redis無 → in-flight 선점이 아님이 증명될 때만 가용 풀로 되돌림(SADD).
+        // 좌석별 HGET → HGETALL 1회, 좌석별 SADD → 가변인자 SADD 1회로 묶어 N RTT → 2 RTT 로 축약.
+        // 결정 로직(grace 비교)은 동일 — 동일 좌석이 동일 조건으로 풀에 되돌아간다.
+        Map<Long, Long> tsMap = preemption.preemptedAtMillisAll(scheduleId);
+        List<Long> toReturn = new ArrayList<>();
         for (Long seatId : dbAvail) {
             if (redisAvail.contains(seatId)) {
                 continue;
             }
-            long preemptedAt = preemption.preemptedAtMillis(scheduleId, seatId);
+            long preemptedAt = tsMap.getOrDefault(seatId, 0L);
             if (preemptedAt == 0L || now - preemptedAt > graceMillis) {
-                preemption.returnSeat(scheduleId, seatId); // 선점 흔적 없음/오래됨 = 진짜 드리프트
-                missingAdded++;
+                toReturn.add(seatId); // 선점 흔적 없음/오래됨 = 진짜 드리프트
             } else {
                 missingSkipped++; // 최근 선점 = [SREM~커밋] in-flight → 되살리면 오버셀
             }
+        }
+        if (!toReturn.isEmpty()) {
+            preemption.returnSeats(scheduleId, toReturn);
+            missingAdded = toReturn.size();
         }
         return new DriftReport(staleRemoved, missingAdded, missingSkipped);
     }

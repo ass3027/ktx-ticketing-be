@@ -2,6 +2,8 @@ package com.ktx.ticketing.booking;
 
 import org.jspecify.annotations.Nullable;
 
+import java.util.Collection;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -42,4 +44,29 @@ public interface SeatPreemption {
      * reconcile 가 missing 좌석을 풀로 되돌리기(SADD) 전, 이 값이 최근이면 in-flight 선점으로 보고 건너뛴다.
      */
     long preemptedAtMillis(Long scheduleId, Long seatInventoryId);
+
+    /**
+     * 한 스케줄의 모든 좌석 → 마지막 선점 시각(epoch millis). 기록 없는 좌석은 결과 맵에 없음.
+     * reconcile 의 missing 루프가 좌석마다 {@link #preemptedAtMillis} 를 N회 호출(=N RTT)하는 대신
+     * HGETALL 1회로 끝내기 위한 벌크 경로(T4-3 워밍업 가속).
+     *
+     * <p>인터페이스 수준 fallback 은 결국 N회 HGET 이라 RTT 절감 효과가 없어 의미가 없다 —
+     * 구현체별 벌크 경로를 명시적으로 강제한다.
+     */
+    default Map<Long, Long> preemptedAtMillisAll(Long scheduleId) {
+        throw new UnsupportedOperationException(
+                "preemptedAtMillisAll 은 구현체별 벌크 경로가 필요하다 — 기본 fallback 미제공");
+    }
+
+    /**
+     * 여러 좌석을 한 번에 가용 풀로 반환(가변인자 SADD). reconcile missing 보정에서 N회 SADD 를
+     * 1회로 줄이는 경로(T4-3 워밍업 가속). 단건 호출자는 {@link #returnSeat} 을 계속 쓴다.
+     *
+     * <p>기본 구현은 단건 호출 N회로 대체해 mock 기반 테스트 호환성을 유지한다.
+     */
+    default void returnSeats(Long scheduleId, Collection<Long> seatInventoryIds) {
+        for (Long id : seatInventoryIds) {
+            returnSeat(scheduleId, id);
+        }
+    }
 }

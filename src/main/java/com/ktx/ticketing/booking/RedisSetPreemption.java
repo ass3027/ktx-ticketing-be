@@ -7,7 +7,10 @@ import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -113,6 +116,28 @@ public class RedisSetPreemption implements SeatPreemption {
     public long preemptedAtMillis(Long scheduleId, Long seatInventoryId) {
         Object ts = redis.opsForHash().get(tsKey(scheduleId), seatInventoryId.toString());
         return ts == null ? 0L : Long.parseLong(ts.toString());
+    }
+
+    @Override
+    public Map<Long, Long> preemptedAtMillisAll(Long scheduleId) {
+        Map<Object, Object> entries = redis.opsForHash().entries(tsKey(scheduleId));
+        if (entries.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, Long> result = new HashMap<>(entries.size());
+        for (Map.Entry<Object, Object> e : entries.entrySet()) {
+            result.put(Long.parseLong(e.getKey().toString()), Long.parseLong(e.getValue().toString()));
+        }
+        return result;
+    }
+
+    @Override
+    public void returnSeats(Long scheduleId, Collection<Long> seatInventoryIds) {
+        if (seatInventoryIds.isEmpty()) {
+            return;
+        }
+        String[] ids = seatInventoryIds.stream().map(Object::toString).toArray(String[]::new);
+        redis.opsForSet().add(key(scheduleId), ids);
     }
 
     private String nowMillis() {
