@@ -12,11 +12,30 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       SPRING_PROFILES_ACTIVE: local
+      # 입장 제어 상한 K — 잠정 기본 100. 부하측정(L1 등)에선 환경변수로 우회:
+      #   $env:BOOKING_ADMISSION_MAX_ACTIVE=2000 후 docker compose up.
+      # base 기본값으로 둬 모든 compose 조합(-f ... -f k6.yml 포함)이 동일 app 정의를
+      # 갖게 한다 → `docker compose run` 이 app 을 재생성하는 트리거(조합 불일치)를 없앤다.
+      BOOKING_ADMISSION_MAX_ACTIVE: ${BOOKING_ADMISSION_MAX_ACTIVE:-100}
+    # AOT 캐시 영속화 — 컨테이너 재생성(force-recreate)에도 보존해 재 dump(~10s) 회피.
+    # entrypoint 가 jar 변경 시 자동 무효화하므로 코드 변경 시엔 재 dump 된다.
+    volumes:
+      - aot_cache:/app/aot
     depends_on:
       mysql:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # JRE 이미지엔 curl/wget/nc 가 없어 bash 내장 /dev/tcp 로 actuator health 를 친다.
+    # CMD-SHELL 은 /bin/sh 라 /dev/tcp(bash 전용)가 안 되므로 반드시 bash 로 실행한다.
+    # 의존 서비스(k6)가 condition: service_healthy 로 app 의 *준비 완료*를 기다리게 해
+    # 수동 health 폴링·`run --no-deps` 없이도 부하 도구가 준비된 app 에만 붙도록 한다.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8080 && printf 'GET /actuator/health HTTP/1.0\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '\"status\":\"UP\"'"]
+      interval: 5s
+      timeout: 4s
+      retries: 30
+      start_period: 20s
 
   mysql:
     image: mysql:8.0
@@ -48,3 +67,4 @@ services:
 
 volumes:
   mysql_data:
+  aot_cache:

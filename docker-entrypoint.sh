@@ -1,6 +1,10 @@
 #!/bin/sh
 # JDK 25 AOT cache (JEP 483) 활용 부팅.
-# 첫 컨테이너 시작 시 dump 1회 → 이후 부팅마다 mmap 로드로 단축.
+# 캐시는 named volume(/app/aot)에 두어 컨테이너 재생성(force-recreate)·재배포에도 보존한다.
+# → 최초 1회만 dump(~10s), 이후 부팅은 mmap 로드로 단축. (컨테이너 쓰기 레이어에 두면
+#   force-recreate 마다 사라져 매번 재 dump 되므로 volume 영속화가 필수.)
+#
+# 무효화: jar 가 캐시보다 최신이면(코드 변경 후 재빌드) 캐시를 재생성한다. 동일 jar 면 재사용.
 #
 # dump 단계는 spring.context.exit=onRefresh 로 컨텍스트 refresh 까지만 도달하고 종료한다.
 # ApplicationRunner (DataInitializer, AvailPoolWarmup) 는 refresh 이후 단계라 dump 중엔 실행되지
@@ -11,11 +15,23 @@
 
 set -e
 
-CACHE=/app/app.aot
+CACHE_DIR=/app/aot
+CACHE="$CACHE_DIR/app.aot"
 JAR=/app/app.jar
 
+mkdir -p "$CACHE_DIR"
+
+# 재 dump 필요 판단: 캐시 없음 OR jar 가 캐시보다 최신(코드 변경).
+NEED_DUMP=0
 if [ ! -f "$CACHE" ]; then
-  echo "[entrypoint] AOT cache 없음 → dump 시작 (1회)"
+  NEED_DUMP=1
+  echo "[entrypoint] AOT cache 없음 → dump 시작 (최초 1회)"
+elif [ "$JAR" -nt "$CACHE" ]; then
+  NEED_DUMP=1
+  echo "[entrypoint] jar 가 캐시보다 최신 → AOT cache 무효화·재 dump"
+fi
+
+if [ "$NEED_DUMP" -eq 1 ]; then
   if java -XX:AOTCacheOutput="$CACHE" \
           -Dspring.context.exit=onRefresh \
           -jar "$JAR"; then
@@ -24,6 +40,8 @@ if [ ! -f "$CACHE" ]; then
     echo "[entrypoint] AOT cache dump 실패 — 캐시 없이 부팅 진행"
     rm -f "$CACHE"
   fi
+else
+  echo "[entrypoint] AOT cache 재사용: $CACHE"
 fi
 
 if [ -f "$CACHE" ]; then
