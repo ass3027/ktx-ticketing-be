@@ -14,7 +14,7 @@
 | T4-1 부하 환경 구축(k6) | ✅ | `load-tests/` 골격 + L1~L6/E1~E3 스크립트 + Makefile + reset.sh + post_run_check.sql |
 | T4-2 서버 모니터링 | ✅ | Actuator + Micrometer + Prometheus + Grafana(JVM 대시보드) + Lettuce Redis 명령 지연 계측 |
 | T4-3 L1 직접선택 단일좌석 경쟁(정합성) | ✅ | **oversell=0·중복=0 3회 일관 달성** (호스트 JVM, refused≈0). 1 win / 999 정상 패배 |
-| T4-4 L2/L2b 정상·자동배정 처리량 | ⏳ | |
+| T4-4 L2/L2b 정상·자동배정 처리량 | ✅ | L2: 예매 p95≤500ms·TPS 833~863·5xx 0.03% 합격 / **list p95~0.9s SLO(200ms) 미달**(→L3·E3). L2b: AUTO 1000석 정확 매진·oversell 0 |
 | T4-5 L3 조회 폭주 | ⏳ | |
 | T4-6 L4 입장 초과 | ⏳ | |
 | T4-7 L5 임계점 탐색(K 확정) | ⏳ | `booking.admission.max-active` 잠정값 100 → L5 결과로 확정 |
@@ -248,3 +248,86 @@ DB `@Version` 방어 조합이 단일 좌석 1,000 경쟁에서 정확히 1건�
 부수적으로, Windows+Docker Desktop 환경의 측정 함정(NAT 포화로 인한 부하 미달)을 격리 실험으로
 규명하고 호스트 JVM 실행으로 우회해 *진짜 1,000 동시* 부하를 확보했다 — 측정 신뢰성 자체가
 이번 T4-3 의 부가 성과.
+
+---
+
+## T4-4 — L2/L2b 정상·자동배정 처리량 (완료, 2026-06-19)
+
+### 측정 환경 (L2·L2b 공통)
+- **컨테이너 k6** (`docker-compose.k6.yml`, BASE_URL=http://app:8080) — T4-3 에서 확립한 표준.
+  NAT·TIME_WAIT 우회로 refused=0. 실행기: `Run-Scenario-Container.ps1`.
+- app: Docker 컨테이너(JDK 25 AOT 캐시), MySQL 8.0 / Redis 7. admission K=2000(env 우회).
+- 매 회차 TRUNCATE+FLUSHDB → app force-recreate(재시드/워밍업) → health → k6.
+- raw: `load-tests/results/L2_*`, `L2b_*` (gitignore). 앱 빌드 commit 3c92c48.
+
+### 집계 단위 보정 (L1 과 차이)
+L2/L2b 시나리오에 `http.setResponseCallback(expectedStatuses(2xx, 409, 410[, 429]))` 적용 →
+정상 비즈니스 응답(경쟁 패배 409 / 매진 410 / 입장 제어 429)을 `http_req_failed` 에서 제외했다.
+따라서 **여기의 `http_req_failed` 는 SLO(5xx<1%) 와 동일 의미**(진짜 서버 오류/연결 실패만 집계).
+L1 은 측정·문서 확정분이라 미적용 — L1 의 `http_req_failed≈50%` 는 "409 정상 패배 포함" 값이고
+T4-3 본문에서 별도로 해석했다. 비대칭은 의도된 것.
+
+---
+
+### L2 — 정상 예매 혼합 부하 (조회 70% / 입장+예매 25% / 확정 5%)
+
+프로파일: 0→1,000 VU ramp-up 2분 → 1,000 유지 5분 → ramp-down 1분 (총 8분), 3회.
+
+| 지표 | SLO | 회차1 | 회차2 | 회차3 | 판정 |
+|------|-----|------:|------:|------:|:----:|
+| **예매 p95** (`type:reserve`) | ≤ 500ms | 408ms | 378ms | 348ms | ✅ |
+| 예매 max (p99 참고) | ≤ 1s | 1.34s | 2.13s | 1.50s | △(꼬리) |
+| **조회 p95** (`type:list`) | ≤ 200ms | **996ms** | **960ms** | **911ms** | ❌ |
+| **TPS** (http_reqs/s) | ≥ 200 | 833 | 847 | 863 | ✅ |
+| **5xx** (http_req_failed) | < 1% | 0.03% | 0.03% | 0.04% | ✅ |
+| interrupted iters | 0 | 0 | 0 | 0 | ✅ |
+| 총 iterations | — | 416,869 | 424,660 | 432,977 | — |
+
+- **예매 p95 348~408ms — 핵심 booking 경로 SLO 합격.** TPS 833~863 으로 목표(200)의 4배 이상.
+- **5xx 0.03~0.04%** — 보정된 집계라 진짜 서버 오류. SLO 통과. (429/409/410 제외가 의도대로 동작.)
+- **조회(list) p95 ~0.9s 로 SLO(200ms) 대폭 미달 → k6 threshold crossed.** 이번 T4-4 의 핵심 발견.
+
+#### list p95 미달 — 원인 가설과 후속 (측정 후 최적화)
+버그가 아니라 측정이 드러낸 설계 이슈. 두 가지 가설:
+1. **조회 캐시 미적용/비효율** — 설계상 schedule-list 는 Redis 단기 캐시로 p95≤200ms 를 노려야
+   하나(2-tier 일관성), 현재 매 요청이 DB 를 칠 가능성. → **실험 E3(조회 캐시 on/off, T4-9)의
+   Before 데이터**로 직결.
+2. **부하 경합** — 1,000 VU 가 booking 임계구간(Redisson 락)과 자원을 다투며 조회 응답까지 밀림
+   (avg http_req_duration 260~296ms 를 list 가 끌어올림).
+
+→ "측정 후 최적화" 원칙에 따라 **L3(조회 폭주, T4-5)·E3(T4-9)에서 본격 분석.** L2 에서 Before 가
+선확보된 셈. 현 단계 판정: **예매·처리량·5xx 합격, 조회 지연 미달(사유·후속 명시).**
+
+---
+
+### L2b — 자동 배정(AUTO) 처리량·매진 정합성
+
+프로파일: `shared-iterations` 1,000 VU × 2,000 iter (좌석 1,000 보다 많이 시도 → 매진 수렴), 3회.
+
+| 지표 | 회차1 | 회차2 | 회차3 | 판정 |
+|------|------:|------:|------:|:----:|
+| **reserve_ok** (201 성공) | 1000 | 1000 | 1000 | ✅ =좌석 수 |
+| **sold_out** (410) | 1000 | 1000 | 1000 | ✅ 초과분 전량 매진 |
+| checks (unexpected) | 100%(2000/0) | 100% | 100% | ✅ |
+| http_req_failed | 0.00% | 0.00% | 0.00% | ✅ |
+| 예매 p95 | 5.81s | 4.96s | 6.25s | △(최악 경합) |
+| 실효 처리량 reserve_ok/s | 97 | 109 | 108 | — |
+
+**정합성 (Invoke-PostRunCheck, 3회 동일):**
+중복 HELD/CONFIRMED **0행**, 스케줄 AVAILABLE **0**(완전 매진), HELD 만료 잔재 **0**,
+Redis `SCARD avail:1` **0**.
+
+- **AUTO 모드 매진 정합성 완벽** — 1,000석에 2,000요청 → 정확히 1,000 성공 + 1,000 매진(410),
+  oversell 0. `SPOP` 기반 원자 선점이 AUTO 경로에서도 정확함을 HTTP 풀스택으로 입증(L1 의 SEAT/SREM
+  검증을 AUTO/SPOP 로 확장).
+- **PostRunCheck 라벨 주의:** SQL 이 L1 전용(`seat_inventory_id=1` 단일 좌석)이라 `① HELD=1` 은
+  *그 한 좌석*의 값일 뿐. **L2b 매진의 진짜 증거는 `④ AVAILABLE=0` + `SCARD=0`.** (라벨 일반화는
+  별도 백로그.)
+- **예매 p95 ~5s 는 의도된 최악 경합** — `shared-iterations` 로 1,000 VU 가 동일 스케줄 락 임계구간을
+  직렬 통과(L1 과 동성격). L2b 목적은 처리량 SLO 가 아니라 **AUTO 매진 정합성**이므로 threshold
+  crossing 은 정상. 현실적 처리량은 혼합 부하인 L2(TPS 833~863)가 대표값.
+
+### 관찰·해석 (T4-4 종합)
+정상/자동배정 부하에서 **예매 경로·처리량·정합성은 모두 합격**(예매 p95≤500ms, TPS≥200×4,
+oversell 0, 매진 정확 수렴). 유일한 미달은 **조회(list) 지연**으로, 이는 2-tier 일관성 모델의
+조회 캐시 효과를 검증할 L3·E3 의 Before 신호로 활용한다.
