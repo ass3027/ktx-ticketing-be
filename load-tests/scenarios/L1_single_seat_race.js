@@ -19,6 +19,7 @@
 import http from 'k6/http';
 import { check } from 'k6';
 import { Counter } from 'k6/metrics';
+import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
 import { BASE_URL, SCHEDULE_ID, SEAT_INVENTORY_ID } from '../common/config.js';
 import { userIds, getEntryToken, bookSeat } from '../common/helpers.js';
 
@@ -53,12 +54,15 @@ export default function () {
     }
 }
 
-// teardown: 성공 건 수가 2 이상이면 oversell 카운터 증가 (summary 에서 확인)
+// 성공 건이 2 이상이면 oversell — 경고 출력. 더불어 표준 요약(콘솔 표)과 JSON 을 남겨
+// p95/p99·http_reqs 등 성능 지표를 보존한다(P4 성능 측정 근거). 이전엔 return {} 로 억제됐다.
 export function handleSummary(data) {
     const ok = data.metrics['reserve_ok'] ? data.metrics['reserve_ok'].values['count'] : 0;
     if (ok > 1) {
-        // k6 summary 에 oversell 경고 출력
         console.error(`[L1] OVERSELL DETECTED: reserve_ok=${ok} (expected 1)`);
     }
-    return {};
+    return {
+        stdout: textSummary(data, { indent: ' ', enableColors: false }),
+        'load-tests/results/L1_summary.json': JSON.stringify(data, null, 2),
+    };
 }

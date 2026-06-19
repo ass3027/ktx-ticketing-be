@@ -1,0 +1,32 @@
+## k6 부하 생성기를 app 과 같은 docker 네트워크에서 실행하기 위한 전용 compose.
+## 컨테이너↔컨테이너(app:8080) 통신으로 Windows Docker Desktop 의 포트 프록시(NAT) 와
+## 호스트 ephemeral 포트/TIME_WAIT 압박을 모두 우회한다 (T4-3 측정 환경 개선).
+##
+## 사용:
+##   docker compose -f docker-compose.yml -f docker-compose.k6.yml run --rm \
+##     -e SCHEDULE_ID=1 -e SEAT_INVENTORY_ID=1 \
+##     k6 run /loadtests/scenarios/L1_single_seat_race.js
+## 또는 Run-L1-Container.ps1 사용.
+##
+## profile 로 분리 → 평소 `docker compose up` 에는 뜨지 않는다.
+services:
+  k6:
+    image: grafana/k6:latest
+    profiles: ["loadtest"]
+    # app 컨테이너 DNS 로 직접 접속 (포트 프록시 미경유).
+    environment:
+      BASE_URL: http://app:8080
+      K6_WEB_DASHBOARD: "false"
+    # load-tests 전체를 마운트 → 시나리오/공용모듈 import 와 결과 쓰기 경로 정렬.
+    # 시나리오의 handleSummary 가 'load-tests/results/...' 에 쓰므로 작업 디렉터리를
+    # 리포 루트(/work)로 두고 그 하위에 load-tests 를 마운트한다.
+    working_dir: /work
+    volumes:
+      - ./load-tests:/work/load-tests
+    # app 과 동일한 compose 기본 네트워크를 공유 → DNS 이름 'app' 으로 해석.
+    # (network_mode 미지정 = compose default network 자동 참여.)
+    # service_healthy: app 의 healthcheck 통과(= 실제 준비)까지 k6 가 자동 대기.
+    # 단, app 이 이미 healthy 면 compose 가 app 을 재생성하지 않는다 → 가드/--no-deps 불필요.
+    depends_on:
+      app:
+        condition: service_healthy
