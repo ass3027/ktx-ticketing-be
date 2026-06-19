@@ -6,9 +6,15 @@
  * 프로파일: 0→1000 VUser ramp-up 2분 → 1000 유지 5분 → ramp-down 1분
  * 합격: 예매 p95 ≤ 500ms, ≥ 200 TPS, 5xx < 1%
  */
+import http from 'k6/http';
 import { check, sleep } from 'k6';
-import { BASE_URL, SCHEDULE_ID, FROM_DATE, DEP, ARR } from '../common/config.js';
+import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
+import { SCHEDULE_ID, FROM_DATE, DEP, ARR } from '../common/config.js';
 import { userIds, getEntryToken, bookSeat, bookAuto, confirmReservation, listSchedules } from '../common/helpers.js';
+
+// 입장 제어(429)·경쟁 패배(409)·매진(410)은 정상 비즈니스 응답 → http_req_failed 에서 제외.
+// 이래야 http_req_failed 가 SLO(5xx<1%) 와 같은 의미가 된다(진짜 서버 오류/연결 실패만 집계).
+http.setResponseCallback(http.expectedStatuses({ min: 200, max: 299 }, 409, 410, 429));
 
 export const options = {
     scenarios: {
@@ -66,4 +72,12 @@ export default function () {
     }
 
     sleep(1);
+}
+
+// 표준 요약(콘솔 표)+JSON 보존 → 처리량·p95/p99·5xx 근거(P4 성능 측정).
+export function handleSummary(data) {
+    return {
+        stdout: textSummary(data, { indent: ' ', enableColors: false }),
+        'load-tests/results/L2_summary.json': JSON.stringify(data, null, 2),
+    };
 }
