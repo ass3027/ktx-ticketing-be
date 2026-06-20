@@ -68,7 +68,8 @@ export function confirmReservation(token, reservationId) {
         null,
         {
             headers: { 'X-Entry-Token': token },
-            tags: { type: 'confirm' },
+            // name 태그로 동적 URL(예약 ID)을 묶는다 — 미지정 시 ID마다 time-series 폭발.
+            tags: { type: 'confirm', name: '/api/reservations/:id/confirm' },
         }
     );
 }

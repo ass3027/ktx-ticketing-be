@@ -31,6 +31,7 @@ export const options = {
         'http_req_duration{type:reserve}': ['p(95)<500', 'p(99)<1000'],
         'http_req_duration{type:list}': ['p(95)<200'],
         'http_req_failed': ['rate<0.01'],
+        'http_reqs': ['rate>200'], // S3 처리량 SLO(동시 1,000 VU 에서 ≥200 TPS) 자동 단언
     },
 };
 

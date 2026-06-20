@@ -286,6 +286,7 @@ L1/L2/L2b 시나리오에 `http.setResponseCallback(expectedStatuses(2xx, 409, 4
 | 총 iterations | — | 416,869 | 424,660 | 432,977 | — |
 
 - **예매 p95 348~408ms — 핵심 booking 경로 SLO 합격.** TPS 833~863 으로 목표(200)의 4배 이상.
+  (S3 TPS 는 `http_reqs: rate>200` threshold 로 자동 단언하도록 게이트화.)
 - **5xx 0.03~0.04%** — 보정된 집계라 진짜 서버 오류. SLO 통과. (429/409/410 제외가 의도대로 동작.)
 - **조회(list) p95 ~0.9s 로 SLO(200ms) 대폭 미달 → k6 threshold crossed.** 이번 T4-4 의 핵심 발견.
 
