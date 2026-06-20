@@ -98,10 +98,9 @@ M2 의 `ConcurrencyPocTest`(서비스 계층) 검증을 HTTP + Redis + DB 풀스
 
 ### 지표 해석 (오독 방지)
 
-- **`http_req_failed` ≈ 50% 는 "서버 오류"가 아니다.** VU 당 요청 2건
-  (`/api/entry` 200 + `/api/reservations`)인데, 999명의 booking 이 **409 SeatTaken**(정상 경쟁
-  패배)으로 응답한다. k6 는 4xx 를 failed 로 집계할 뿐 5xx 는 0건이다. (refused 가 있는 후반
-  회차는 도달 요청 수가 줄어 비율이 다소 올라가지만 성격은 동일.)
+- **`http_req_failed` = 0% 가 5xx=0 단언이다.** `setResponseCallback(expectedStatuses(2xx,409,410,429))`
+  로 999명의 정상 경쟁 패배(409 SeatTaken)를 실패 집계에서 제외 → 진짜 5xx/연결 실패만 집계.
+  threshold `http_req_failed: rate<0.01` 가 패배자의 5xx 누수를 자동 차단(L2/L2b 와 동일 집계).
 - **p95 ≈ 1.4s 는 booking SLO(p95 ≤ 500ms) 를 초과하지만 L1 에선 정상.** L1 은 *단일 좌석에
   1,000 요청이 동시 직격*하는 최악 경쟁 시나리오로, 목적은 **정합성**이지 처리량이 아니다.
   분산 락(Redisson) 임계 구간을 1,000 요청이 직렬로 통과하므로 꼬리 지연이 길다.
@@ -157,6 +156,8 @@ k6 를 app 과 같은 docker 네트워크에서 실행(`docker-compose.k6.yml`, 
 
 - **3회 전부 refused=0 + http_reqs=2000(진짜 1,000 동시 경쟁) + 1 win / 999 정상 패배 + oversell=0.**
   호스트 JVM 판(후반 회차 refused 잔여)보다 깨끗한 **L1 의 이상적 측정값**. 이 구성이 L2~L6 표준 인프라.
+- **`http_req_failed` threshold(rate<0.01) 추가 후 재측정 3회 모두 0%(0/2000) 통과** = 999 패배자
+  전원 깨끗한 409, 5xx 누수 0 을 자동 단언. (오버셀은 `reserve_ok==1` + DB 로 검증)
 - p95(~2.4s)가 호스트 판(~1.4s)보다 큰 것은 측정 신뢰성의 대가 — 호스트 판은 refused 로 빠진
   요청만큼 실경쟁이 줄어 꼬리가 짧았다. 1,000 이 *전부* 직렬 임계구간을 통과하는 값이 이쪽이 정확.
 
@@ -260,12 +261,10 @@ DB `@Version` 방어 조합이 단일 좌석 1,000 경쟁에서 정확히 1건�
 - 매 회차 TRUNCATE+FLUSHDB → app force-recreate(재시드/워밍업) → health → k6.
 - raw: `load-tests/results/L2_*`, `L2b_*` (gitignore). 앱 빌드 commit 3c92c48.
 
-### 집계 단위 보정 (L1 과 차이)
-L2/L2b 시나리오에 `http.setResponseCallback(expectedStatuses(2xx, 409, 410[, 429]))` 적용 →
+### 집계 단위 보정
+L1/L2/L2b 시나리오에 `http.setResponseCallback(expectedStatuses(2xx, 409, 410[, 429]))` 적용 →
 정상 비즈니스 응답(경쟁 패배 409 / 매진 410 / 입장 제어 429)을 `http_req_failed` 에서 제외했다.
-따라서 **여기의 `http_req_failed` 는 SLO(5xx<1%) 와 동일 의미**(진짜 서버 오류/연결 실패만 집계).
-L1 은 측정·문서 확정분이라 미적용 — L1 의 `http_req_failed≈50%` 는 "409 정상 패배 포함" 값이고
-T4-3 본문에서 별도로 해석했다. 비대칭은 의도된 것.
+따라서 **`http_req_failed` 는 SLO(5xx<1%) 와 동일 의미**(진짜 서버 오류/연결 실패만 집계).
 
 ---
 

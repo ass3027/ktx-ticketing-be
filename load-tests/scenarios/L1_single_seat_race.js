@@ -2,7 +2,7 @@
  * L1: 직접 선택 — 단일 좌석 동시 경쟁 (정합성)
  *
  * 목적: 1,000 VUser 가 동일 좌석에 동시 SEAT 예매 → 성공 정확히 1건, oversell == 0 (S4)
- * 합격: oversell count == 0, reserve_ok count == 1
+ * 합격: reserve_ok count == 1 (2건 이상이면 오버셀 → 실패). 최종 판정은 DB(post_run_check.sql).
  *
  * <b>실행 전 준비</b> — `booking.admission.max-active` 가 운영 잠정값(100)이면 1,000 VU 중 ~900
  * 이 입장 단계에서 429 차단돼 좌석 경쟁 자체가 일어나지 않는다. L1 은 *좌석 선점 정합성* 검증이
@@ -23,8 +23,12 @@ import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
 import { BASE_URL, SCHEDULE_ID, SEAT_INVENTORY_ID } from '../common/config.js';
 import { userIds, getEntryToken, bookSeat } from '../common/helpers.js';
 
-const oversell = new Counter('oversell');
+// 오버셀은 reserve_ok==1 threshold 로 간접 검증, 최종 판정은 DB(post_run_check.sql).
 const reserveOk = new Counter('reserve_ok');
+
+// 경쟁 패배(409)·매진(410)·입장 제어(429)는 정상 응답 → http_req_failed 에서 제외.
+// 이래야 http_req_failed 가 SLO(5xx<1%) 와 같은 의미가 된다(진짜 서버 오류만 집계).
+http.setResponseCallback(http.expectedStatuses({ min: 200, max: 299 }, 409, 410, 429));
 
 export const options = {
     scenarios: {
@@ -36,8 +40,8 @@ export const options = {
         },
     },
     thresholds: {
-        oversell: ['count==0'],
         reserve_ok: ['count==1'],
+        http_req_failed: ['rate<0.01'], // 999 패배자가 깨끗한 4xx 인지 — 5xx 누수 가드
     },
 };
 
@@ -54,8 +58,7 @@ export default function () {
     }
 }
 
-// 성공 건이 2 이상이면 oversell — 경고 출력. 더불어 표준 요약(콘솔 표)과 JSON 을 남겨
-// p95/p99·http_reqs 등 성능 지표를 보존한다(P4 성능 측정 근거). 이전엔 return {} 로 억제됐다.
+// 성공 2건 이상이면 오버셀 경고. 표준 요약(콘솔 표)+JSON 으로 p95/p99·http_reqs 보존.
 export function handleSummary(data) {
     const ok = data.metrics['reserve_ok'] ? data.metrics['reserve_ok'].values['count'] : 0;
     if (ok > 1) {

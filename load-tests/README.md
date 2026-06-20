@@ -107,8 +107,8 @@ E1/E3 Before 실행 전: 앱에 토글 환경변수 필요 (T4-9 구현 후 확�
 
 | 시나리오 | 지표 | 기준 |
 |----------|------|------|
-| L1 | oversell | == 0 |
-| L1 | reserve_ok | == 1 |
+| L1 | reserve_ok | == 1 (k6 threshold) |
+| L1 | oversell | == 0 (DB `post_run_check.sql` 로 판정) |
 | L2 | 예매 p95 | ≤ 500ms |
 | L2 | 예매 p99 | ≤ 1,000ms |
 | L2 | 조회 p95 | ≤ 200ms |
