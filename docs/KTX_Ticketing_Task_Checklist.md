@@ -15,7 +15,8 @@
 | P3 기능 구현 | 13 | 13 | 100% | M3 ✅ |
 | P4 성능 측정 | 12 | 2 | 17% | M4 |
 | P5 비동기 | 3 | 0 | 0% | — |
-| P6 산출물 | 10 | 0 | 0% | M5 |
+| P6 산출물 | 7 | 0 | 0% | M5 |
+| P7 심화 산출물 (110%) | 3 | 0 | 0% | — |
 | **합계** | **53** | **30** | **57%** | |
 
 ---
@@ -99,10 +100,15 @@
 - [ ] **T6-5** 동작 영상: 동시성 시연 + 부하 결과
 - [ ] **T6-6** 셀프 체크리스트 7항목 점검(`Portfolio_Project_Evaluation_Criteria.md`)
 - [ ] **T6-7** 최종 점검 + 제출
-- [ ] **T6-8** 프로젝트에 쓰인 Redis 핵심 기능 정리 — 선점 게이트(Set `SREM`/`SPOP`)·잔여/활성자 카운터·`EntryToken` TTL·분산 락(Redisson) 등 실제 사용한 Redis 자료구조·명령·패턴을 용도·일관성 등급(강/약)·DB(SoT) reconcile 관계와 함께 정리 → README/문서 반영
-- [ ] **T6-9** 기존 KTX(코레일) 앱 예약 방식 대비 개선점 정리 — 실제 코레일 예약 흐름(가시적 대기열, 좌석 선점 후 결제 단계 등)과 본 프로젝트 설계(보이지 않는 입장 제어·Redis Set 원자 선점·2-tier 일관성·HELD TTL 자동 복구)를 항목별로 대조해 개선점·트레이드오프를 정리 → README 반영. C7(나만의 관점) 근거로 활용
-- [ ] **T6-10** 블로그 정리 — 개발 중 도출한 트레이드오프·트러블슈팅을 외부 공개용 글로 정리. 후보 소재: ① **데이터 시드 JPA vs JdbcTemplate**(성능 격차의 진짜 원인 = 영속성 컨텍스트 누적, `docs/Test_Seeding_Strategy.md`) ② Redis–DB reconcile 정합성 함정(`docs/KTX_Ticketing_Reconcile_Design.md`) ③ 동시 1,000요청 oversell=0 검증(선점 SREM/SPOP + 낙관락) ④ 보이지 않는 입장 제어(INCR-rollback). C4(AI 활용)·C7(나만의 관점) 보강. 글마다 "문제→가설→측정/근거→결론" 구조 유지
 - **DoD(M5)**: README + 배포/영상 + 체크리스트 완료
+
+## P7. 심화 산출물 (110% · Stretch · M5 이후)
+> M5(100% 완성) DoD 에는 속하지 않는 가산 항목. 제출 가능 상태를 확보한 뒤 여유 시 착수해
+> 포트폴리오 변별력(C4·C7)을 보강한다. 미완이어도 M5 합격에는 영향 없음.
+- [ ] **T7-1** 프로젝트에 쓰인 Redis 핵심 기능 정리 — 선점 게이트(Set `SREM`/`SPOP`)·잔여/활성자 카운터·`EntryToken` TTL·분산 락(Redisson) 등 실제 사용한 Redis 자료구조·명령·패턴을 용도·일관성 등급(강/약)·DB(SoT) reconcile 관계와 함께 정리 → README/문서 반영
+- [ ] **T7-2** 기존 KTX(코레일) 앱 예약 방식 대비 개선점 정리 — 실제 코레일 예약 흐름(가시적 대기열, 좌석 선점 후 결제 단계 등)과 본 프로젝트 설계(보이지 않는 입장 제어·Redis Set 원자 선점·2-tier 일관성·HELD TTL 자동 복구)를 항목별로 대조해 개선점·트레이드오프를 정리 → README 반영. C7(나만의 관점) 근거로 활용
+- [ ] **T7-3** 블로그 정리 — 개발 중 도출한 트레이드오프·트러블슈팅을 외부 공개용 글로 정리. 후보 소재: ① **데이터 시드 JPA vs JdbcTemplate**(성능 격차의 진짜 원인 = 영속성 컨텍스트 누적, `docs/Test_Seeding_Strategy.md`) ② Redis–DB reconcile 정합성 함정(`docs/KTX_Ticketing_Reconcile_Design.md`) ③ 동시 1,000요청 oversell=0 검증(선점 SREM/SPOP + 낙관락) ④ 보이지 않는 입장 제어(INCR-rollback) ⑤ **k6 포트 고갈 트러블슈팅**(Windows Docker Desktop 포트 프록시 NAT 압박 → `tcp_tw_reuse`가 답이 아닌 이유 → same-network 직결로 근본 수정, `docs/K6_Port_Exhaustion_Troubleshooting.md`). C4(AI 활용)·C7(나만의 관점) 보강. 글마다 "문제→가설→측정/근거→결론" 구조 유지
+- **DoD(P7)**: 가산 항목 — 착수분만큼 README/블로그에 반영 (필수 아님)
 
 ---
 
