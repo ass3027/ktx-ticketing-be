@@ -38,23 +38,20 @@ L1 은 *좌석 선점 정합성* 검증이라 입장 제어를 우회해야 1,00
 PowerShell 스크립트(`load-tests/scripts/`)가 reset+restart+health-wait+k6+정합성 검증을
 한 번에 처리한다. `make`/`bash` 불필요, mysql/redis-cli 도 컨테이너 경유라 호스트 설치 의존 없음.
 
-1. **K 우회**: `./load-tests/scripts/Set-AdmissionOverride.ps1 -On` — `docker-compose.override.yml`
-   생성(`BOOKING_ADMISSION_MAX_ACTIVE: 2000`, gitignore 대상) + app force-recreate + health 대기를
-   한 번에 처리(§`docker-compose 오버라이드` 참조). 상한값 조정: `-MaxActive 5000`.
-2. **본 측정 (기본 3회)** — PowerShell 7 터미널에서:
+1. **본 측정 (기본 3회)** — PowerShell 7 터미널에서:
    ```powershell
-   ./load-tests/scripts/Run-L1.ps1
-   # 회수 변경: ./load-tests/scripts/Run-L1.ps1 -Iterations 5
+   pwsh load-tests/scripts/Run-Scenario-Container.ps1 `
+     -Scenario load-tests/scenarios/L1_single_seat_race.js -PostRunCheck
+   # 회수 변경: 위 명령에 -Iterations 5
    ```
-   다른 셸(cmd/Git Bash)에서 호출하려면 `pwsh load-tests/scripts/Run-L1.ps1`.
-   실행 정책 차단 시: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` 한 번 또는
-   호출 시 `pwsh -ExecutionPolicy Bypass -File load-tests/scripts/Run-L1.ps1`.
-   각 회 raw 로그(`load-tests/results/L1_run_$i.txt`) + 정합성 결과
-   (`L1_run_$i.check.txt`) 가 누적된다(gitignore).
-3. **결과 표 기입**: `docs/P4_Result.md` T4-3 섹션의 회차별 행에 reserve_ok / oversell /
+   k6 를 app 과 같은 docker 네트워크에서 실행(`docker-compose.k6.yml`, BASE_URL=http://app:8080)해
+   Windows 포트 프록시(NAT)/호스트 TIME_WAIT 압박을 우회한다(refused=0, §`K6_Port_Exhaustion_Troubleshooting.md`).
+   입장 제어(K) 우회는 러너가 `BOOKING_ADMISSION_MAX_ACTIVE=2000` 을 매 회차 자동 주입하므로
+   `Set-AdmissionOverride.ps1` 은 불필요(수동/레거시 경로에서만 사용).
+   각 회 raw 로그(`load-tests/results/L1_container_run_$i.txt`) + 정합성 결과
+   (`L1_container_run_$i.check.txt`) 가 누적된다(gitignore).
+2. **결과 표 기입**: `docs/P4_Result.md` T4-3 섹션의 회차별 행에 reserve_ok / oversell /
    p50·p95·p99 / DB·Redis 단언 결과 기록.
-4. **K 복원**: `./load-tests/scripts/Set-AdmissionOverride.ps1 -Off` — override 삭제 + app
-   force-recreate + health 대기 (운영 K 값 복원).
 
 #### bash/make 사용자 (Linux/macOS/Git Bash)
 

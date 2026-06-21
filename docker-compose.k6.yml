@@ -6,7 +6,7 @@
 ##   docker compose -f docker-compose.yml -f docker-compose.k6.yml run --rm \
 ##     -e SCHEDULE_ID=1 -e SEAT_INVENTORY_ID=1 \
 ##     k6 run /loadtests/scenarios/L1_single_seat_race.js
-## 또는 Run-L1-Container.ps1 사용.
+## 또는 Run-Scenario-Container.ps1 -Scenario load-tests/scenarios/L1_single_seat_race.js -PostRunCheck
 ##
 ## profile 로 분리 → 평소 `docker compose up` 에는 뜨지 않는다.
 services:

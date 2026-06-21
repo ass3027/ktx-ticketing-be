@@ -223,7 +223,9 @@ pwsh load-tests/scripts/Run-L1-Host.ps1 -Iterations 3
 docker compose up -d app
 ```
 
-> Docker 컨테이너 그대로 측정하려면 `Run-L1.ps1`. 단 Windows 에선 위 NAT 포화로 refused 다수 발생.
+> 컨테이너 k6 로 측정하려면 `Run-Scenario-Container.ps1 -Scenario load-tests/scenarios/L1_single_seat_race.js -PostRunCheck`
+> (app 과 same-network 직결로 NAT 우회 → refused≈0). 당시 호스트 k6 → 포트매핑(`Run-L1.ps1`) 경로는
+> Windows NAT 포화로 refused 다수라 폐기됨.
 
 ### 합격 기준 (S4 — 정합성) — 전부 충족
 - k6 threshold: `oversell == 0` AND `reserve_ok == 1` ✅ (3회 Exit 0)

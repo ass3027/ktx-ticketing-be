@@ -6,7 +6,7 @@
     k6 를 app 과 같은 docker 네트워크에서 실행한다(`docker-compose.k6.yml`, BASE_URL=http://app:8080).
     컨테이너↔컨테이너 통신이라 Windows Docker Desktop 의 포트 프록시(NAT) 와 호스트 ephemeral
     포트/TIME_WAIT 압박을 모두 우회 → refused=0 으로 진짜 N 동시 부하를 측정한다.
-    (Run-L1-Container.ps1 을 시나리오 경로/결과 prefix 파라미터로 일반화한 것. L2~L6 공용.)
+    (시나리오 경로/결과 prefix 를 파라미터화한 L1~L6 공용 러너.)
 
     매 회: TRUNCATE+FLUSHDB → app 재기동(admission=2000 env) → health 대기
           → 컨테이너 k6 run → (옵션) Invoke-PostRunCheck.
