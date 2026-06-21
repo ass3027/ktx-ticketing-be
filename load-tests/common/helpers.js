@@ -17,7 +17,7 @@ export function getEntryToken(userId, scheduleId) {
     const res = http.post(
         `${BASE_URL}/api/entry`,
         JSON.stringify({ userId, scheduleId }),
-        { headers: { 'Content-Type': 'application/json' } }
+        { headers: { 'Content-Type': 'application/json' }, tags: { type: 'entry' } }
     );
     if (res.status === 201) {
         return res.json('token');
@@ -70,6 +70,21 @@ export function confirmReservation(token, reservationId) {
             headers: { 'X-Entry-Token': token },
             // name 태그로 동적 URL(예약 ID)을 묶는다 — 미지정 시 ID마다 time-series 폭발.
             tags: { type: 'confirm', name: '/api/reservations/:id/confirm' },
+        }
+    );
+}
+
+/**
+ * 예매 취소 (DELETE). 좌석(avail SADD)과 활성 슬롯(leave DECR)을 모두 반환한다.
+ */
+export function cancelReservation(token, reservationId) {
+    return http.del(
+        `${BASE_URL}/api/reservations/${reservationId}`,
+        null,
+        {
+            headers: { 'X-Entry-Token': token },
+            // 동적 URL(예약 ID)을 name 태그로 묶는다 — 미지정 시 ID마다 time-series 폭발.
+            tags: { type: 'cancel', name: '/api/reservations/:id' },
         }
     );
 }
