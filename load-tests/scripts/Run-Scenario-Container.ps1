@@ -23,6 +23,9 @@
 .PARAMETER PostRunCheck
     매 회차 후 Invoke-PostRunCheck(DB/Redis 정합성) 실행 여부. L1/L2b 처럼 정합성을 단언하는
     시나리오에서만 켠다. L2(혼합 부하)는 기본 끔.
+.PARAMETER AdmissionMax
+    app 의 BOOKING_ADMISSION_MAX_ACTIVE(K). 기본 2000=입장 제어 우회(L1/L2).
+    L4 처럼 입장 제어를 발동시켜야 하면 100(운영값) 을 준다.
 .EXAMPLE
     pwsh load-tests/scripts/Run-Scenario-Container.ps1 -Scenario load-tests/scenarios/L2_normal_flow.js -Iterations 3
 .EXAMPLE
@@ -36,6 +39,7 @@ param(
     [int]$ScheduleId = 1,
     [int]$SeatInventoryId = 1,
     [int]$HealthWaitSeconds = 120,
+    [int]$AdmissionMax = 2000,
     [switch]$PostRunCheck
 )
 
@@ -48,9 +52,11 @@ if (-not $ResultPrefix) {
     $ResultPrefix = (Split-Path -Leaf $Scenario) -replace '_.*$','' -replace '\.js$',''
 }
 
-# 단일 compose 조합 — app 재기동도 k6 실행도 동일 -f 세트. admission 우회는 env.
+# 단일 compose 조합 — app 재기동도 k6 실행도 동일 -f 세트. admission(K)은 env 로 주입.
+# 기본 2000 = 입장 제어 우회(L1/L2 가 경쟁/처리량을 보려면 입장에 안 막혀야 함).
+# L4(입장 제어 검증)처럼 K 를 발동시켜야 하면 -AdmissionMax 100 으로 정상값을 준다.
 $compose = @('-f', 'docker-compose.yml', '-f', 'docker-compose.k6.yml')
-$env:BOOKING_ADMISSION_MAX_ACTIVE = '2000'
+$env:BOOKING_ADMISSION_MAX_ACTIVE = "$AdmissionMax"
 
 # k6 컨테이너 안의 시나리오 경로 (load-tests 가 /work/load-tests 로 마운트됨).
 $containerScenario = "/work/" + ($Scenario -replace '\\','/')
@@ -71,7 +77,7 @@ try {
 
         # 매 회차 app 재생성 — reset 후 seed/워밍업(DataInitializer/AvailPoolWarmup, 부팅 1회)을
         # 다시 태운다. AOT 캐시는 named volume 에 보존돼 재 dump 없이 빠르게 뜬다.
-        Write-Host '=== app 재생성 (단일 조합, admission=2000 env) ===' -ForegroundColor Cyan
+        Write-Host "=== app 재생성 (단일 조합, admission=$AdmissionMax env) ===" -ForegroundColor Cyan
         docker compose @compose up -d --force-recreate app 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "app 재기동 실패 (exit $LASTEXITCODE)" }
 
@@ -86,15 +92,16 @@ try {
         }
         if (-not $ready) { throw "app healthy 시간초과" }
         $adm = (docker compose exec -T app sh -c 'echo $BOOKING_ADMISSION_MAX_ACTIVE' 2>$null).Trim()
-        if ($adm -ne '2000') { throw "admission 보장 실패: BOOKING_ADMISSION_MAX_ACTIVE=$adm (기대 2000)" }
+        if ($adm -ne "$AdmissionMax") { throw "admission 보장 실패: BOOKING_ADMISSION_MAX_ACTIVE=$adm (기대 $AdmissionMax)" }
         Write-Host "app healthy, admission=$adm" -ForegroundColor Green
 
         $runLog = Join-Path $resultsDir "${ResultPrefix}_container_run_$i.txt"
         Write-Host "k6(컨테이너) 실행 → $runLog" -ForegroundColor Cyan
+        # Tee-Object 로 파일 저장과 동시에 콘솔로 흘려보낸다(k6 기본 출력 표시). Out-Null 금지.
         docker compose @compose run --rm `
             -e SCHEDULE_ID=$ScheduleId -e SEAT_INVENTORY_ID=$SeatInventoryId `
             k6 run $containerScenario 2>&1 |
-            Tee-Object -FilePath $runLog | Out-Null
+            Tee-Object -FilePath $runLog
         $k6Exit = $LASTEXITCODE
 
         if ($PostRunCheck) {
