@@ -43,6 +43,68 @@ param(
     [switch]$PostRunCheck
 )
 
+# ── 회차 단계 함수 ──────────────────────────────────────────────────────────
+
+function Reset-SeedState {
+    # DB TRUNCATE + Redis FLUSHDB. 스키마는 안 건드림 — 재시드는 app 재기동이 담당.
+    Write-Host '=== DB TRUNCATE ===' -ForegroundColor Cyan
+    Get-Content load-tests/seed/reset.sql -Raw | docker compose exec -T mysql mysql -uktx -pktx1234 ktx_ticketing
+    if ($LASTEXITCODE -ne 0) { throw "mysql reset 실패 (exit $LASTEXITCODE)" }
+    Write-Host '=== Redis FLUSHDB ===' -ForegroundColor Cyan
+    docker compose exec -T redis redis-cli FLUSHDB | Out-Null
+}
+
+function Restart-App {
+    # app 재생성 후 healthy 대기 + admission(K) 주입값 보장.
+    # reset 후 seed/워밍업(DataInitializer/AvailPoolWarmup, 부팅 1회)을 다시 태운다.
+    # AOT 캐시는 named volume 에 보존돼 재 dump 없이 빠르게 뜬다.
+    param([string[]]$Compose, [int]$AdmissionMax, [int]$HealthWaitSeconds)
+
+    Write-Host "=== app 재생성 (단일 조합, admission=$AdmissionMax env) ===" -ForegroundColor Cyan
+    docker compose @Compose up -d --force-recreate app 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "app 재기동 실패 (exit $LASTEXITCODE)" }
+
+    Write-Host "=== app healthy 대기 (최대 ${HealthWaitSeconds}s) ===" -ForegroundColor Cyan
+    $deadline = (Get-Date).AddSeconds($HealthWaitSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if ((docker inspect ktx-ticketing-be-app-1 --format '{{.State.Health.Status}}' 2>$null) -eq 'healthy') {
+            $adm = (docker compose exec -T app sh -c 'echo $BOOKING_ADMISSION_MAX_ACTIVE' 2>$null).Trim()
+            if ($adm -ne "$AdmissionMax") { throw "admission 보장 실패: BOOKING_ADMISSION_MAX_ACTIVE=$adm (기대 $AdmissionMax)" }
+            Write-Host "app healthy, admission=$adm" -ForegroundColor Green
+            return
+        }
+        Start-Sleep -Seconds 2
+    }
+    throw "app healthy 시간초과"
+}
+
+function Invoke-K6Run {
+    # 컨테이너 k6 실행. 결과 종료코드를 반환한다.
+    # Tee-Object 로 파일 저장과 동시에 Out-Host 로 콘솔에 표시(k6 기본 출력). Out-Null 금지.
+    # 함수 안에서는 Tee 의 파이프 출력이 반환값으로 새므로 Out-Host 로 흡수 → return 만 출력.
+    param([string[]]$Compose, [string]$ContainerScenario, [int]$ScheduleId, [int]$SeatInventoryId, [string]$RunLog)
+
+    Write-Host "k6(컨테이너) 실행 → $RunLog" -ForegroundColor Cyan
+    docker compose @Compose run --rm `
+        -e SCHEDULE_ID=$ScheduleId -e SEAT_INVENTORY_ID=$SeatInventoryId `
+        k6 run $ContainerScenario 2>&1 |
+        Tee-Object -FilePath $RunLog | Out-Host
+    return $LASTEXITCODE
+}
+
+function Write-RunSummary {
+    # 회차 로그에서 refused/http_reqs 를 뽑아 한 줄 요약. ANSI 색상코드는 제거 후 파싱.
+    param([string]$RunLog, [int]$Iteration, [int]$K6Exit)
+
+    $clean = (Get-Content $RunLog -Raw) -replace '\x1b\[[0-9;]*m',''
+    $refused = ([regex]::Matches($clean, 'actively refused|connection refused|dial tcp')).Count
+    $reqs = if ($clean -match 'http_reqs[\.\s]+:\s*(\d+)') { $matches[1] } else { '?' }
+    $color = if ($K6Exit -eq 0) { 'Green' } else { 'Yellow' }
+    Write-Host "회차 $Iteration : refused=$refused, http_reqs=$reqs, k6Exit=$K6Exit" -ForegroundColor $color
+}
+
+# ── 메인 ────────────────────────────────────────────────────────────────────
+
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Push-Location $repoRoot
@@ -69,50 +131,19 @@ try {
     for ($i = 1; $i -le $Iterations; $i++) {
         Write-Host "`n############### $ResultPrefix(Container) 회차 $i / $Iterations ###############" -ForegroundColor Cyan
 
-        Write-Host '=== DB TRUNCATE ===' -ForegroundColor Cyan
-        Get-Content load-tests/seed/reset.sql -Raw | docker compose exec -T mysql mysql -uktx -pktx1234 ktx_ticketing
-        if ($LASTEXITCODE -ne 0) { throw "mysql reset 실패 (exit $LASTEXITCODE)" }
-        Write-Host '=== Redis FLUSHDB ===' -ForegroundColor Cyan
-        docker compose exec -T redis redis-cli FLUSHDB | Out-Null
-
-        # 매 회차 app 재생성 — reset 후 seed/워밍업(DataInitializer/AvailPoolWarmup, 부팅 1회)을
-        # 다시 태운다. AOT 캐시는 named volume 에 보존돼 재 dump 없이 빠르게 뜬다.
-        Write-Host "=== app 재생성 (단일 조합, admission=$AdmissionMax env) ===" -ForegroundColor Cyan
-        docker compose @compose up -d --force-recreate app 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "app 재기동 실패 (exit $LASTEXITCODE)" }
-
-        Write-Host "=== app healthy 대기 (최대 ${HealthWaitSeconds}s) ===" -ForegroundColor Cyan
-        $deadline = (Get-Date).AddSeconds($HealthWaitSeconds)
-        $ready = $false
-        while ((Get-Date) -lt $deadline) {
-            if ((docker inspect ktx-ticketing-be-app-1 --format '{{.State.Health.Status}}' 2>$null) -eq 'healthy') {
-                $ready = $true; break
-            }
-            Start-Sleep -Seconds 2
-        }
-        if (-not $ready) { throw "app healthy 시간초과" }
-        $adm = (docker compose exec -T app sh -c 'echo $BOOKING_ADMISSION_MAX_ACTIVE' 2>$null).Trim()
-        if ($adm -ne "$AdmissionMax") { throw "admission 보장 실패: BOOKING_ADMISSION_MAX_ACTIVE=$adm (기대 $AdmissionMax)" }
-        Write-Host "app healthy, admission=$adm" -ForegroundColor Green
+        Reset-SeedState
+        Restart-App -Compose $compose -AdmissionMax $AdmissionMax -HealthWaitSeconds $HealthWaitSeconds
 
         $runLog = Join-Path $resultsDir "${ResultPrefix}_container_run_$i.txt"
-        Write-Host "k6(컨테이너) 실행 → $runLog" -ForegroundColor Cyan
-        # Tee-Object 로 파일 저장과 동시에 콘솔로 흘려보낸다(k6 기본 출력 표시). Out-Null 금지.
-        docker compose @compose run --rm `
-            -e SCHEDULE_ID=$ScheduleId -e SEAT_INVENTORY_ID=$SeatInventoryId `
-            k6 run $containerScenario 2>&1 |
-            Tee-Object -FilePath $runLog
-        $k6Exit = $LASTEXITCODE
+        $k6Exit = Invoke-K6Run -Compose $compose -ContainerScenario $containerScenario `
+            -ScheduleId $ScheduleId -SeatInventoryId $SeatInventoryId -RunLog $runLog
 
         if ($PostRunCheck) {
             $checkLog = Join-Path $resultsDir "${ResultPrefix}_container_run_$i.check.txt"
             & "$PSScriptRoot/Invoke-PostRunCheck.ps1" -ScheduleId $ScheduleId -SeatInventoryId $SeatInventoryId -OutputPath $checkLog
         }
 
-        $clean = (Get-Content $runLog -Raw) -replace '\x1b\[[0-9;]*m',''
-        $refused = ([regex]::Matches($clean, 'actively refused|connection refused|dial tcp')).Count
-        $reqs = if ($clean -match 'http_reqs[\.\s]+:\s*(\d+)') { $matches[1] } else { '?' }
-        Write-Host "회차 $i : refused=$refused, http_reqs=$reqs, k6Exit=$k6Exit" -ForegroundColor $(if ($k6Exit -eq 0) { 'Green' } else { 'Yellow' })
+        Write-RunSummary -RunLog $runLog -Iteration $i -K6Exit $k6Exit
     }
 
     Write-Host "`n전체 회차 종료. 결과: $resultsDir/${ResultPrefix}_container_run_*.txt" -ForegroundColor Green
