@@ -45,12 +45,12 @@ PowerShell 스크립트(`load-tests/scripts/`)가 reset+restart+health-wait+k6+�
    # 회수 변경: 위 명령에 -Iterations 5
    ```
    k6 를 app 과 같은 docker 네트워크에서 실행(`docker-compose.k6.yml`, BASE_URL=http://app:8080)해
-   Windows 포트 프록시(NAT)/호스트 TIME_WAIT 압박을 우회한다(refused=0, §`K6_Port_Exhaustion_Troubleshooting.md`).
+   Windows 포트 프록시(NAT)/호스트 TIME_WAIT 압박을 우회한다(refused=0, §`docs/notes/K6_Port_Exhaustion_Troubleshooting.md`).
    입장 제어(K) 우회는 러너가 `BOOKING_ADMISSION_MAX_ACTIVE=2000` 을 매 회차 자동 주입하므로
    `Set-AdmissionOverride.ps1` 은 불필요(수동/레거시 경로에서만 사용).
    각 회 raw 로그(`load-tests/results/L1_container_run_$i.txt`) + 정합성 결과
    (`L1_container_run_$i.check.txt`) 가 누적된다(gitignore).
-2. **결과 표 기입**: `docs/P4_Result.md` T4-3 섹션의 회차별 행에 reserve_ok / oversell /
+2. **결과 표 기입**: `docs/results/P4_Result.md` T4-3 섹션의 회차별 행에 reserve_ok / oversell /
    p50·p95·p99 / DB·Redis 단언 결과 기록.
 
 #### bash/make 사용자 (Linux/macOS/Git Bash)
@@ -67,7 +67,7 @@ done
 
 합격: 모든 회차에서 oversell=0 / reserve_ok=1 / DB HELD=1 / DB AVAILABLE=999 / SCARD=999.
 
-결과 표는 `docs/P4_Result.md` T4-3 섹션에 누적.
+결과 표는 `docs/results/P4_Result.md` T4-3 섹션에 누적.
 
 ### docker-compose 오버라이드 (K 우회용)
 

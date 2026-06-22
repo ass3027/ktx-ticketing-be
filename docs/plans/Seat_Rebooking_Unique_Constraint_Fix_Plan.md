@@ -128,7 +128,7 @@ MySQL 유니크 인덱스는 **NULL 중복 허용** →
 - `pwsh load-tests/scripts/Run-Scenario-Container.ps1 -Scenario load-tests/scenarios/L4_admission_overload.js -AdmissionMax 100 -Iterations 1`
 - 기대: `server_errors < 10`(5xx 소멸) · `admission_reject_rate > 0.5` 유지 ·
   reserve 표본이 3분 내내(입장 수백→수천) · `dropped_iterations==0` · k6Exit=0.
-- 통과하면 `-Iterations 3` 본 측정 → `docs/P4_Result.md` T4-6 기입.
+- 통과하면 `-Iterations 3` 본 측정 → `docs/results/P4_Result.md` T4-6 기입.
 
 ---
 

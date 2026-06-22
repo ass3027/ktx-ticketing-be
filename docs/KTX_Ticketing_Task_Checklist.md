@@ -9,7 +9,7 @@
 ## 🚨 긴급 처리 (임시 · 기존 페이즈와 별개)
 > 진행 중 발견된 선행 차단 이슈. 정규 task(P4~) 재개 전 아래를 먼저 처리한다. 완료 시 본 섹션 정리.
 
-- [ ] **U-1 (최우선)** 좌석 재예매 불가 버그 수정 — `reservation.seat_inventory_id` 전역 unique 가 취소/만료 후 재예매(같은 좌석에 새 행 INSERT)를 막아 Duplicate entry 500. churn 기반 부하 모델(L5/L6)·T4-7/T4-8 의 전제. 수정안·검증 절차 = `docs/Seat_Rebooking_Unique_Constraint_Fix_Plan.md` (A-2: 활성 예약당 1건 부분 유니크). 발견: L4 churn 재측정 → consistency 게이트 설계 중 재확인.
+- [ ] **U-1 (최우선)** 좌석 재예매 불가 버그 수정 — `reservation.seat_inventory_id` 전역 unique 가 취소/만료 후 재예매(같은 좌석에 새 행 INSERT)를 막아 Duplicate entry 500. churn 기반 부하 모델(L5/L6)·T4-7/T4-8 의 전제. 수정안·검증 절차 = `docs/plans/Seat_Rebooking_Unique_Constraint_Fix_Plan.md` (A-2: 활성 예약당 1건 부분 유니크). 발견: L4 churn 재측정 → consistency 게이트 설계 중 재확인.
 - [ ] **U-2** k6 단독 SLO/정합성 판정 — 별도 ps1 사후 SQL 확인을 k6 teardown 게이트로 **병합**. 앱에 읽기전용 `/internal/consistency`(availDrift·expiredHeld·status 정합성, `ReconciliationService` 비교 로직 재사용·**mutation 없음**, `@Profile` 가드) 추가 → 각 시나리오 `teardown()` 에서 호출, `Counter('consistency_violation')` + `threshold count==0` 로 승격(teardown 메트릭→threshold 반영 **실측 완료**). ps1 은 오케스트레이션(컨테이너·env·health·리셋)만 남김. **선행: U-1**(재예매 정상화 후라야 churn 시나리오 드리프트가 의미). 단계: ①audit 서비스 → ②엔드포인트 → ③teardown 게이트(L1→L6→L5).
 
 ---
@@ -74,8 +74,8 @@
 ## P4. 성능 측정 → 🏁 M4
 - [x] **T4-1** 부하 환경 구축(k6/nGrinder)
 - [x] **T4-2** 서버 모니터링(CPU/메모리/DB커넥션/Redis 지연)
-- [x] **T4-3** L1 직접선택 단일좌석 경쟁(정합성) → 호스트 JVM 1,000 VU 3회 **oversell=0·중복=0·win=1 일관 달성**(S4). Docker Desktop NAT 포화로 인한 컨테이너 측정 refused(631)를 격리 실험으로 규명→호스트 실행(refused≈0)으로 우회. `Run-L1-Host.ps1` 신설, BASE_URL 127.0.0.1 고정, L1 `handleSummary` 메트릭 복원. 결과: `P4_Result.md`.
-- [x] **T4-4** L2/L2b 정상·자동배정 처리량 → 컨테이너 k6 3회. **L2**(혼합부하 1,000VU 8분): 예매 p95 348~408ms(≤500 ✅)·TPS 833~863(≥200 ✅)·5xx 0.03~0.04%(<1% ✅) 합격, 단 **조회 p95 ~0.9s SLO(200ms) 미달**(→ 캐시/경합 가설, L3·E3 Before 로 활용). **L2b**(AUTO shared-iter): 1,000석 정확 매진(reserve_ok=1000·sold_out=1000)·oversell 0·중복 0(SPOP 원자 선점). 결과: `P4_Result.md`.
+- [x] **T4-3** L1 직접선택 단일좌석 경쟁(정합성) → 호스트 JVM 1,000 VU 3회 **oversell=0·중복=0·win=1 일관 달성**(S4). Docker Desktop NAT 포화로 인한 컨테이너 측정 refused(631)를 격리 실험으로 규명→호스트 실행(refused≈0)으로 우회. `Run-L1-Host.ps1` 신설, BASE_URL 127.0.0.1 고정, L1 `handleSummary` 메트릭 복원. 결과: `results/P4_Result.md`.
+- [x] **T4-4** L2/L2b 정상·자동배정 처리량 → 컨테이너 k6 3회. **L2**(혼합부하 1,000VU 8분): 예매 p95 348~408ms(≤500 ✅)·TPS 833~863(≥200 ✅)·5xx 0.03~0.04%(<1% ✅) 합격, 단 **조회 p95 ~0.9s SLO(200ms) 미달**(→ 캐시/경합 가설, L3·E3 Before 로 활용). **L2b**(AUTO shared-iter): 1,000석 정확 매진(reserve_ok=1000·sold_out=1000)·oversell 0·중복 0(SPOP 원자 선점). 결과: `results/P4_Result.md`.
 - [ ] **T4-5** L3 조회 폭주
 - [ ] **T4-6** L4 입장 초과
 - [ ] **T4-7** L5 임계점 탐색 → **활성자 상한 K 역산·확정**
@@ -115,7 +115,7 @@
 > 포트폴리오 변별력(C4·C7)을 보강한다. 미완이어도 M5 합격에는 영향 없음.
 - [ ] **T7-1** 프로젝트에 쓰인 Redis 핵심 기능 정리 — 선점 게이트(Set `SREM`/`SPOP`)·잔여/활성자 카운터·`EntryToken` TTL·분산 락(Redisson) 등 실제 사용한 Redis 자료구조·명령·패턴을 용도·일관성 등급(강/약)·DB(SoT) reconcile 관계와 함께 정리 → README/문서 반영
 - [ ] **T7-2** 기존 KTX(코레일) 앱 예약 방식 대비 개선점 정리 — 실제 코레일 예약 흐름(가시적 대기열, 좌석 선점 후 결제 단계 등)과 본 프로젝트 설계(보이지 않는 입장 제어·Redis Set 원자 선점·2-tier 일관성·HELD TTL 자동 복구)를 항목별로 대조해 개선점·트레이드오프를 정리 → README 반영. C7(나만의 관점) 근거로 활용
-- [ ] **T7-3** 블로그 정리 — 개발 중 도출한 트레이드오프·트러블슈팅을 외부 공개용 글로 정리. 후보 소재: ① **데이터 시드 JPA vs JdbcTemplate**(성능 격차의 진짜 원인 = 영속성 컨텍스트 누적, `docs/Test_Seeding_Strategy.md`) ② Redis–DB reconcile 정합성 함정(`docs/KTX_Ticketing_Reconcile_Design.md`) ③ 동시 1,000요청 oversell=0 검증(선점 SREM/SPOP + 낙관락) ④ 보이지 않는 입장 제어(INCR-rollback) ⑤ **k6 포트 고갈 트러블슈팅**(Windows Docker Desktop 포트 프록시 NAT 압박 → `tcp_tw_reuse`가 답이 아닌 이유 → same-network 직결로 근본 수정, `docs/K6_Port_Exhaustion_Troubleshooting.md`). C4(AI 활용)·C7(나만의 관점) 보강. 글마다 "문제→가설→측정/근거→결론" 구조 유지
+- [ ] **T7-3** 블로그 정리 — 개발 중 도출한 트레이드오프·트러블슈팅을 외부 공개용 글로 정리. 후보 소재: ① **데이터 시드 JPA vs JdbcTemplate**(성능 격차의 진짜 원인 = 영속성 컨텍스트 누적, `docs/notes/Test_Seeding_Strategy.md`) ② Redis–DB reconcile 정합성 함정(`docs/KTX_Ticketing_Reconcile_Design.md`) ③ 동시 1,000요청 oversell=0 검증(선점 SREM/SPOP + 낙관락) ④ 보이지 않는 입장 제어(INCR-rollback) ⑤ **k6 포트 고갈 트러블슈팅**(Windows Docker Desktop 포트 프록시 NAT 압박 → `tcp_tw_reuse`가 답이 아닌 이유 → same-network 직결로 근본 수정, `docs/notes/K6_Port_Exhaustion_Troubleshooting.md`). C4(AI 활용)·C7(나만의 관점) 보강. 글마다 "문제→가설→측정/근거→결론" 구조 유지
 - **DoD(P7)**: 가산 항목 — 착수분만큼 README/블로그에 반영 (필수 아님)
 
 ---

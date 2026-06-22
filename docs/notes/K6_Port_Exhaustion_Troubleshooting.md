@@ -96,4 +96,4 @@ k6(컨테이너) ──────────▶ app(컨테이너):8080      #
 
 - `docker-compose.k6.yml` — same-network 직결 구성
 - `load-tests/common/config.js` — `BASE_URL` 주입(127.0.0.1 IPv4 고정 이유 포함)
-- `docs/P4_Result.md` — T4-3 refused 631 → 호스트 실행 우회 측정 기록
+- `docs/results/P4_Result.md` — T4-3 refused 631 → 호스트 실행 우회 측정 기록
