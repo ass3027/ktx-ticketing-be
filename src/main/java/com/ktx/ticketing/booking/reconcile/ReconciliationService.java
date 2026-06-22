@@ -17,7 +17,7 @@ import java.util.Set;
  * Redis 가용 풀(avail Set)을 DB(SoT, {@code SeatInventory.status=AVAILABLE})로 수렴시키는 reconcile 잡(T3-10).
  * 둘은 원자적으로 갱신되지 않아 드리프트가 생긴다(예매 롤백 시 보상 SADD 없음 / 커밋 후 부수효과 실패 / 크래시).
  *
- * <p><b>방향 비대칭이 핵심</b>(설계: {@code docs/KTX_Ticketing_Reconcile_Design.md} §4·§7):
+ * <p><b>방향 비대칭이 핵심</b>(설계 근거: Reconcile Design 문서 §4·§7):
  * <ul>
  *   <li><b>stale 제거(SREM)</b> — Redis엔 있는데 DB는 AVAILABLE 아님. 최악이 언더셀(자가치유) → <b>상시 안전</b>.</li>
  *   <li><b>missing 추가(SADD)</b> — DB는 AVAILABLE인데 Redis 부재. 잘못하면 이미 잡힌 좌석을 되살려 <b>오버셀</b>

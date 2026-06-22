@@ -23,7 +23,7 @@ import java.util.stream.Collectors;
  * <p><b>선점 시각 마커(T3-10 reconcile 정합성):</b> 모든 선점(SREM/SPOP)은 좌석별 "마지막 선점 시각"을
  * {@code preempt:ts:{scheduleId}} 해시에 <b>선점과 한 Lua 스크립트로 원자 기록</b>한다. reconcile 잡이
  * "DB는 AVAILABLE인데 Redis Set엔 부재"인 missing 좌석을 가용 풀로 되돌릴(SADD) 때, 이 마커가 최근이면
- * {@code [SREM~커밋]} in-flight 윈도우로 보고 건너뛰어 <b>오버셀</b>을 막는다. (설계: {@code docs/KTX_Ticketing_Reconcile_Design.md} §7)
+ * {@code [SREM~커밋]} in-flight 윈도우로 보고 건너뛰어 <b>오버셀</b>을 막는다. (설계 근거: Reconcile Design 문서 §7)
  * HSET은 실제 선점(SREM/SPOP 성공) 시에만 찍으므로 선점 패자·미존재 좌석은 마커를 갱신하지 않는다.
  */
 @Service
