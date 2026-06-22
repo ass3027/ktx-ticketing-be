@@ -10,6 +10,10 @@ export const SEAT_INVENTORY_ID = parseInt(__ENV.SEAT_INVENTORY_ID || '1');
 
 export const USER_COUNT = 10_000;
 
+// 시드 스케줄 수(DataInitializer.TOTAL_SCHEDULES)와 일치해야 한다. L5 가 예매를 여러 스케줄에
+// 분산해 단일 avail 키 매진을 피하는 데 쓴다. 시드 변경 시 같이 맞춘다.
+export const SCHEDULE_COUNT = parseInt(__ENV.SCHEDULE_COUNT || '50');
+
 // 조회 파라미터 (시드 데이터 고정값)
 export const DEP = '서울';
 export const ARR = '부산';

@@ -17,7 +17,8 @@ export function getEntryToken(userId, scheduleId) {
     const res = http.post(
         `${BASE_URL}/api/entry`,
         JSON.stringify({ userId, scheduleId }),
-        { headers: { 'Content-Type': 'application/json' }, tags: { type: 'entry' } }
+        // responseType:'text' — discardResponseBodies:true 시나리오(L5)에서도 token 본문을 유지.
+        { headers: { 'Content-Type': 'application/json' }, tags: { type: 'entry' }, responseType: 'text' }
     );
     if (res.status === 201) {
         return res.json('token');
@@ -55,6 +56,8 @@ export function bookAuto(token) {
                 'X-Entry-Token': token,
             },
             tags: { type: 'reserve' },
+            // responseType:'text' — discardResponseBodies:true 시나리오(L5)에서도 reservationId 유지(churn 취소용).
+            responseType: 'text',
         }
     );
 }
