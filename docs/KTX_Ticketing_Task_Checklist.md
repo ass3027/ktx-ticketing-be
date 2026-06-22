@@ -6,6 +6,14 @@
 
 ---
 
+## 🚨 긴급 처리 (임시 · 기존 페이즈와 별개)
+> 진행 중 발견된 선행 차단 이슈. 정규 task(P4~) 재개 전 아래를 먼저 처리한다. 완료 시 본 섹션 정리.
+
+- [ ] **U-1 (최우선)** 좌석 재예매 불가 버그 수정 — `reservation.seat_inventory_id` 전역 unique 가 취소/만료 후 재예매(같은 좌석에 새 행 INSERT)를 막아 Duplicate entry 500. churn 기반 부하 모델(L5/L6)·T4-7/T4-8 의 전제. 수정안·검증 절차 = `docs/Seat_Rebooking_Unique_Constraint_Fix_Plan.md` (A-2: 활성 예약당 1건 부분 유니크). 발견: L4 churn 재측정 → consistency 게이트 설계 중 재확인.
+- [ ] **U-2** k6 단독 SLO/정합성 판정 — 별도 ps1 사후 SQL 확인을 k6 teardown 게이트로 **병합**. 앱에 읽기전용 `/internal/consistency`(availDrift·expiredHeld·status 정합성, `ReconciliationService` 비교 로직 재사용·**mutation 없음**, `@Profile` 가드) 추가 → 각 시나리오 `teardown()` 에서 호출, `Counter('consistency_violation')` + `threshold count==0` 로 승격(teardown 메트릭→threshold 반영 **실측 완료**). ps1 은 오케스트레이션(컨테이너·env·health·리셋)만 남김. **선행: U-1**(재예매 정상화 후라야 churn 시나리오 드리프트가 의미). 단계: ①audit 서비스 → ②엔드포인트 → ③teardown 게이트(L1→L6→L5).
+
+---
+
 ## 진행 현황 요약 (수기 갱신)
 | 페이즈 | 태스크 수 | 완료 | 진행률 | 마일스톤 |
 |--------|-----------|------|--------|----------|
