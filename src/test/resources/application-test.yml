@@ -1,10 +1,14 @@
 # 통합 테스트 프로파일 — 메인 application.yml 을 base 로 상속하고 아래 키만 오버라이드한다.
 # datasource/redis 는 @ServiceConnection(ContainersConfig)이 Testcontainers 주소로 덮으므로 여기 두지 않는다.
 spring:
+  # 테스트도 Flyway 로 스키마 생성 → 운영과 동일 스키마(생성 컬럼/부분 유니크 포함)에서 검증.
+  # Testcontainers 가 컨텍스트마다 빈 MySQL 을 주므로 Flyway 가 V1..Vn 을 새로 migrate 한다.
+  flyway:
+    enabled: true
   jpa:
     hibernate:
-      # 메인은 ddl-auto: none(Flyway/수동 스키마 전제). 테스트는 컨텍스트마다 빈 스키마가 필요 → create-drop.
-      ddl-auto: create-drop
+      # 스키마는 Flyway 가 만든다 → Hibernate 는 검증만(validate). (예전 create-drop 은 Flyway 와 충돌)
+      ddl-auto: validate
     show-sql: false
 
 booking:

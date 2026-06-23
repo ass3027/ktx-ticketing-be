@@ -39,6 +39,12 @@ dependencies {
     implementation("org.redisson:redisson-spring-boot-starter:4.4.0")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("io.micrometer:micrometer-registry-prometheus")
+    // 스키마는 Flyway 가 관리(ddl-auto 는 validate). 생성 컬럼/부분 유니크(V2)처럼 ddl-auto 로
+    // 표현 불가한 DDL 을 명시 마이그레이션으로 두기 위함.
+    // Spring Boot 4.0 은 flyway-core 만으론 자동설정을 하지 않는다(모듈 분리) → 자동설정 포함 스타터 필수.
+    // flyway-mysql 은 MySQL 8 방언 모듈(스타터와 별개로 명시).
+    implementation("org.springframework.boot:spring-boot-starter-flyway")
+    implementation("org.flywaydb:flyway-mysql")
     runtimeOnly("com.mysql:mysql-connector-j")
 
     compileOnly("org.projectlombok:lombok")

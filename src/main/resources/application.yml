@@ -3,15 +3,22 @@ spring:
     name: ktx-ticketing-be
 
   datasource:
-    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:ktx_ticketing}?serverTimezone=Asia/Seoul&characterEncoding=UTF-8&rewriteBatchedStatements=true
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3308}/${DB_NAME:ktx_ticketing}?serverTimezone=Asia/Seoul&characterEncoding=UTF-8&rewriteBatchedStatements=true
     username: ${DB_USER:ktx}
     password: ${DB_PASSWORD:ktx1234}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
+  # 스키마는 Flyway(db/migration/V*.sql)가 생성·관리. ddl-auto 는 validate 로 둬
+  # 엔티티 ↔ 실제 스키마 불일치를 기동 시 즉시 검출(생성 컬럼은 미매핑이라 validate 무관).
+  flyway:
+    enabled: true
+    baseline-on-migrate: true   # 이미 ddl-auto 로 스키마가 있는 기존 DB 에 V1 을 baseline 으로 흡수.
+    baseline-version: 0          # V1 부터 적용되도록 baseline 을 0 으로.
+
   jpa:
     open-in-view: false
     hibernate:
-      ddl-auto: none
+      ddl-auto: validate
     show-sql: false
     properties:
       hibernate:
