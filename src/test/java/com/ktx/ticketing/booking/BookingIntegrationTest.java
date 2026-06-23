@@ -25,6 +25,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -34,6 +35,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * T3-11: 정합성 자동화 통합 테스트 (M3 DoD = 정상 E2E + 예외 6종).
@@ -207,6 +209,78 @@ class BookingIntegrationTest extends AbstractIntegrationTest {
         assertThat(reservationStatus(reservationId)).isEqualTo(ReservationStatus.EXPIRED);
         assertThat(preemption.availableSeatIds(scheduleId)).contains(targetSeat).hasSize(3);
         assertThat(activeCount()).isZero();
+    }
+
+    // --- B-2: 되돌아온 좌석 재예매 (활성 한정 부분 유니크) ---
+
+    @Test
+    @DisplayName("B-2 취소 후 재예매: 취소로 되돌아온 좌석을 같은 좌석으로 다시 예매하면 성공(과거엔 전역 유니크로 500)")
+    void cancel_후_같은좌석_재예매_성공() {
+        long targetSeat = seatIds.get(0);
+
+        EntrySession first = enter();
+        long firstResId = ((BookingResult.Success) bookingService.bookSeat(first.userId(), scheduleId, targetSeat))
+                .reservation().getId();
+        lifecycleService.cancel(firstResId, first.userId()); // 좌석 AVAILABLE + avail 복귀
+
+        // 같은 좌석 재예매: 전역 유니크였다면 reservation INSERT 가 Duplicate entry → 500.
+        // 부분 유니크(취소 행은 active=NULL)에서는 공존 가능 → 정상 HELD.
+        EntrySession second = enter();
+        BookingResult rebooked = bookingService.bookSeat(second.userId(), scheduleId, targetSeat);
+
+        assertThat(rebooked).isInstanceOf(BookingResult.Success.class);
+        long secondResId = ((BookingResult.Success) rebooked).reservation().getId();
+        assertThat(secondResId).isNotEqualTo(firstResId); // 새 예약 행
+        assertThat(seatStatus(targetSeat)).isEqualTo(SeatStatus.HELD);
+        assertThat(reservationStatus(firstResId)).isEqualTo(ReservationStatus.CANCELLED);
+        assertThat(reservationStatus(secondResId)).isEqualTo(ReservationStatus.HELD);
+    }
+
+    @Test
+    @DisplayName("B-2 만료 후 재예매: HELD 만료 sweep 으로 되돌아온 좌석을 다시 예매하면 성공")
+    void expiry_후_같은좌석_재예매_성공() {
+        long targetSeat = seatIds.get(0);
+
+        EntrySession first = enter();
+        long firstResId = ((BookingResult.Success) bookingService.bookSeat(first.userId(), scheduleId, targetSeat))
+                .reservation().getId();
+        mutableClock.advance(Reservation.HELD_TTL.plusSeconds(60));
+        heldExpiryService.sweep(); // 좌석 AVAILABLE + avail 복귀, 예약 EXPIRED
+
+        EntrySession second = enter();
+        BookingResult rebooked = bookingService.bookSeat(second.userId(), scheduleId, targetSeat);
+
+        assertThat(rebooked).isInstanceOf(BookingResult.Success.class);
+        assertThat(reservationStatus(firstResId)).isEqualTo(ReservationStatus.EXPIRED);
+        assertThat(reservationStatus(((BookingResult.Success) rebooked).reservation().getId()))
+                .isEqualTo(ReservationStatus.HELD);
+    }
+
+    @Test
+    @DisplayName("B-2 불변식 유지: 한 좌석에 '활성' 예약 2건은 부분 유니크(uk_active_seat)가 차단")
+    void 한좌석_활성예약_2건은_차단된다() {
+        // 서비스 경로는 Redis 선점(SREM)이 승자 1명만 통과시켜 DB 까지 2건이 못 간다.
+        // 부분 유니크 제약 자체가 살아있는지(회귀 가드)만 보려면 DB write 를 직접 두 번 시도해야 한다.
+        // 좌석 상태/version 과 무관하게 reservation 의 제약만 때리려고 native INSERT 로 같은 좌석 활성 2건을 넣는다
+        // (Reservation.hold 는 좌석까지 markHeld 하므로 좌석 제약과 섞임 → 순수 검증엔 부적합).
+        long targetSeat = seatIds.get(0);
+        EntrySession s1 = enter();
+        bookingService.bookSeat(s1.userId(), scheduleId, targetSeat); // 활성 HELD 1건 (active = targetSeat)
+        long otherUserId = enter().userId();
+
+        // em 직접 실행이라 Spring 예외 변환 계층(@Repository)을 안 거쳐 Hibernate 원본 예외가 나온다.
+        // 검증의 본질은 "uk_active_seat 가 같은 좌석 활성 2건을 막는다"이므로 메시지로 제약명을 단언한다.
+        assertThatThrownBy(() -> tx.executeWithoutResult(status ->
+                em.createNativeQuery("""
+                        INSERT INTO reservation(user_id, seat_inventory_id, status, held_at, expires_at)
+                        VALUES (?1, ?2, 'HELD', NOW(), NOW())
+                        """)
+                        .setParameter(1, otherUserId)
+                        .setParameter(2, targetSeat)
+                        .executeUpdate()))
+                .as("같은 좌석 활성 2건째는 uk_active_seat 위반")
+                .isInstanceOf(ConstraintViolationException.class)
+                .hasMessageContaining("uk_active_seat");
     }
 
     // --- §3.1 매진 / 이미 선점된 좌석 시도 ---
