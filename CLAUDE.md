@@ -78,6 +78,11 @@ gradle build --no-daemon  # wrapper JAR 없을 때
 
 # 실행 가능한 JAR 생성
 ./gradlew bootJar
+
+# 생성된 JAR 직접 실행 — JDK 25 필요(산출물은 class file 69).
+#   JDK 25 탐색은 $HOME/.jdks 우선. 못 찾으면 ./gradlew -q javaToolchains 로 위치 확인.
+JAVA_HOME="$(find "$HOME/.jdks" -maxdepth 1 -iname '*25*' -type d 2>/dev/null | head -1)" \
+  "$JAVA_HOME/bin/java" -jar build/libs/ktx-ticketing-be-0.0.1-SNAPSHOT.jar
 ```
 
 > **Gradle wrapper 초기화**: `gradle-wrapper.jar` 는 바이너리라 별도 초기화 필요.
