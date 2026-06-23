@@ -30,8 +30,11 @@ public class Reservation {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
+    // 좌석당 '활성(HELD/CONFIRMED)' 예약 1건 불변식은 DB 의 부분 유니크(생성 컬럼 active_seat_inventory_id
+    // + uk_active_seat, V2 마이그레이션)가 강제한다. 여기에 unique=true(전역 유니크)를 두면 취소/만료로
+    // 되돌아온 좌석의 재예매가 막히므로(B-2 버그) 두지 않는다.
     @OneToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "seat_inventory_id", nullable = false, unique = true)
+    @JoinColumn(name = "seat_inventory_id", nullable = false)
     private SeatInventory seatInventory;
 
     @Enumerated(EnumType.STRING)
