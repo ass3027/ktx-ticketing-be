@@ -16,7 +16,7 @@
 | T4-3 L1 직접선택 단일좌석 경쟁(정합성) | ✅ | **oversell=0·중복=0 3회 일관 달성** (호스트 JVM, refused≈0). 1 win / 999 정상 패배 |
 | T4-4 L2/L2b 정상·자동배정 처리량 | ✅ | L2: 예매 p95≤500ms·TPS 833~863·5xx 0.03% 합격 / **list p95~0.9s SLO(200ms) 미달**(→L3·E3). L2b: AUTO 1000석 정확 매진·oversell 0 |
 | T4-5 L3 조회 폭주 | ⏳ | |
-| T4-6 L4 입장 초과 | ⏳ | |
+| T4-6 L4 입장 초과 | 🟡 | **B-2 버그 수정 후 smoke(1회) 그린**: server_errors 0(수정 전 100)·reject 85.8%·k6Exit 0. 본 측정(3회) 미실시(실측자) |
 | T4-7 L5 임계점 탐색(K 확정) | ⏳ | `booking.admission.max-active` 잠정값 100 → L5 결과로 확정 |
 | T4-8 L6 지속 부하(soak) | ⏳ | |
 | T4-9 E1·E2·E3 Before/After | ⏳ | E1-before 토글(`booking.preemption.enabled=false`) 구현 필요 |
@@ -336,3 +336,36 @@ Redis `SCARD avail:1` **0**.
 정상/자동배정 부하에서 **예매 경로·처리량·정합성은 모두 합격**(예매 p95≤500ms, TPS≥200×4,
 oversell 0, 매진 정확 수렴). 유일한 미달은 **조회(list) 지연**으로, 이는 2-tier 일관성 모델의
 조회 캐시 효과를 검증할 L3·E3 의 Before 신호로 활용한다.
+
+---
+
+## T4-6 — L4 입장 초과 (B-2 버그 수정 검증, smoke 1회 그린)
+
+> 상태: smoke(`-Iterations 1`) 그린으로 **B-2(좌석 재예매 불가) 수정**을 검증. 본 측정(3회 공식 수치)은
+> 실측자 책임(본 문서 사용법). 발견 경위·수정 설계는 `docs/plans/Seat_Rebooking_Unique_Constraint_Fix_Plan.md`.
+
+### 배경 — 왜 L4 가 깨졌나
+L4 는 슬롯 churn(입장→예매→1~2s 점유→**취소**→슬롯/좌석 반환)으로 입장↔거절 steady state 를 만든다.
+취소로 되돌아온 좌석이 `SPOP` 로 재배정돼 **재예매**되는데, `reservation.seat_inventory_id` 의
+*상태-무관 전역 유니크*(`UKqjf4…`) 때문에 재예매 INSERT 가 `Duplicate entry` → 500 이 났다.
+
+### 수정 (A-2 활성 한정 부분 유니크)
+- 스키마 관리 **ddl-auto → Flyway** 전환(`V1__baseline`=기존 스키마, `V2__active_seat_unique`).
+- `V2`: 생성 컬럼 `active_seat_inventory_id`(활성 HELD/CONFIRMED 일 때만 좌석id, 아니면 NULL) + 그 위
+  `uk_active_seat`. MySQL 유니크의 NULL 중복 허용 → **활성은 좌석당 1건(오버셀 DB 방어선 유지)**,
+  취소/만료(NULL)는 공존 → **재예매 가능**. 기존 전역 유니크는 제거(FK 용 일반 인덱스 선생성 후 DROP).
+
+### Before / After (K=100, RATE=500 TPS, 3분 + 램프)
+| 지표 | Before (수정 전, 계획서 §1 증거) | After (수정 후 smoke) | 판정 |
+|------|------|------|------|
+| `server_errors` (예매 5xx) | **100** (Duplicate entry) | **0** | ✓ |
+| `http_req_failed` (entry/전체) | 5xx 누수 | **0.00%** (0/134,799) | ✓ |
+| `admission_reject_rate` | — | **85.80%** (>0.5) | ✓ |
+| `dropped_iterations` | — | **0** | ✓ |
+| reserve `p(95)` | — | **88.69ms** (<500) | ✓ |
+| k6Exit | 99 (threshold 위반) | **0** | ✓ |
+
+- **핵심**: churn 이 3분 내내 재예매를 시켰는데 5xx 0 — 되돌아온 좌석 재예매가 정상화됐다.
+- **부수 효과 해소**: Before 의 5xx 100 건은 입장 슬롯 100 개를 누수시켜 K 조기 포화·입장 급감을
+  유발했었다. 수정으로 5xx 가 사라져 이 경로의 누수도 사라짐. (단 "입장 후 예매 미생성 시 슬롯 회수"
+  일반 케이스는 독립 결함 → 백로그 **B-3**.)

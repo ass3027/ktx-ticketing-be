@@ -9,7 +9,6 @@
 ## 🚨 긴급 처리 (임시 · 기존 페이즈와 별개)
 > 진행 중 발견된 선행 차단 이슈. 정규 task(P4~) 재개 전 아래를 먼저 처리한다. 완료 시 본 섹션 정리.
 
-- [ ] **U-1 (최우선)** 좌석 재예매 불가 버그 수정 — `reservation.seat_inventory_id` 전역 unique 가 취소/만료 후 재예매(같은 좌석에 새 행 INSERT)를 막아 Duplicate entry 500. churn 기반 부하 모델(L5/L6)·T4-7/T4-8 의 전제. 수정안·검증 절차 = `docs/plans/Seat_Rebooking_Unique_Constraint_Fix_Plan.md` (A-2: 활성 예약당 1건 부분 유니크). 발견: L4 churn 재측정 → consistency 게이트 설계 중 재확인.
 - [ ] **U-2** k6 단독 SLO/정합성 판정 — 별도 ps1 사후 SQL 확인을 k6 teardown 게이트로 **병합**. 앱에 읽기전용 `/internal/consistency`(availDrift·expiredHeld·status 정합성, `ReconciliationService` 비교 로직 재사용·**mutation 없음**, `@Profile` 가드) 추가 → 각 시나리오 `teardown()` 에서 호출, `Counter('consistency_violation')` + `threshold count==0` 로 승격(teardown 메트릭→threshold 반영 **실측 완료**). ps1 은 오케스트레이션(컨테이너·env·health·리셋)만 남김. **선행: U-1**(재예매 정상화 후라야 churn 시나리오 드리프트가 의미). 단계: ①audit 서비스 → ②엔드포인트 → ③teardown 게이트(L1→L6→L5).
 
 ---
@@ -122,6 +121,8 @@
 
 ## 기술 부채 / 개선 백로그 (페이즈 외 · 여유 시 처리)
 > 특정 페이즈 DoD 에 속하지 않는 후속 개선. 착수 시 독립 브랜치 + 계획 승인.
+- [x] **B-2** 좌석 재예매 불가 버그 수정 (A-2 활성 한정 부분 유니크) — `reservation.seat_inventory_id` 의 상태-무관 전역 유니크가 취소/만료로 되돌아온 좌석의 재예매를 막아 `Duplicate entry`→500. **해결**: 스키마 관리 ddl-auto→Flyway 전환(`V1__baseline`/`V2__active_seat_unique`), `V2` 가 생성 컬럼 `active_seat_inventory_id`(활성일 때만 좌석id, 아니면 NULL)+`uk_active_seat` 로 "좌석당 활성 1건" 불변식만 강제(오버셀 DB 방어선 유지)·취소/만료는 NULL 로 공존 허용→재예매 정상화. 회귀 테스트 3종(`BookingIntegrationTest`: 취소후·만료후 재예매 성공, 활성 2건 차단). L4 smoke 그린(server_errors 100→0). 설계: `docs/plans/Seat_Rebooking_Unique_Constraint_Fix_Plan.md`. 연관: T3-9·T3-11·T4-6.
+- [ ] **B-3** 입장 슬롯 누수 — "입장(active INCR) 후 예매가 생성되지 않으면" 슬롯을 회수할 경로가 없다(`AdmissionService.leave` 는 예약 confirm/cancel/만료에서만 호출). 예매 실패(예외)·중도 이탈 시 슬롯이 EntryToken TTL 만료로도 회수되지 않으면 영구 점유 → K 조기 포화. (B-2 수정으로 *Duplicate entry 5xx* 발 누수는 해소됐으나 구조적 결함은 잔존.) 점검: EntryToken TTL 만료 시 `leave` 보상이 있는지 확인, 없으면 만료 훅 또는 예매 실패 응답 경로에서 보상. 발견: 2026-06-21 L4. 연관: 입장 제어(`AdmissionService`)·T4-6.
 - [ ] **B-1** 시스템 사건 시각 필드 `LocalDateTime` → `Instant` 전환 (zone 의존 제거) — 대상: `Reservation`(heldAt/expiresAt/confirmedAt/cancelledAt)·`SeatInventory`(heldAt/expiresAt)·`User.createdAt` 등 "절대 시각" 필드. **운행 일정(`Schedule.departureTime/arrivalTime`)은 KST 벽시계 표시 의미라 `LocalDateTime` 유지**(전환 대상 아님). 동기: 현재 `expiresAt`(naive `LocalDateTime`)을 프로덕션 `Clock.systemDefaultZone()`으로 찍어 저장·비교 → 저장·비교 zone 이 같아야만 정합(단일 서버에선 동작하나 OS zone 변경/DST·UTC 고정 리팩터링 시 9h skew 로 `expiresAt<now` 오판 위험). `Instant` 는 절대 시각이라 비교에서 zone 이 소거됨 → `BookingIntegrationTest` sweep Clock 의 zone 주석(systemDefault 강제) 자체가 불필요해짐. 범위: 엔티티 4종 + DB 컬럼 타입(`DATETIME`→`TIMESTAMP`/마이그레이션) + 쿼리(`findExpiredHeldIds` 등) + DTO(`expiresAt` 노출 형식) + 기존 테스트. `Clock.instant()` 를 시각 출처로 사용(현재 `LocalDateTime.now(clock)` 에서 한 단계 축약).
 
 ---
