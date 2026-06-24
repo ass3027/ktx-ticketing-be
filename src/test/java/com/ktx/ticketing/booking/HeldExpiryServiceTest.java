@@ -14,10 +14,10 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -33,7 +33,7 @@ class HeldExpiryServiceTest {
 
     // 서로 다른 값으로 둬서 scheduleId/seatId 인자 전치 버그를 잡는다.
     private static final long SCHEDULE_A = 1L, SEAT_A = 42L;
-    private static final long SCHEDULE_B = 2L, SEAT_B = 43L;
+    private static final long SCHEDULE_B = 2L, SEAT_B = 43L, SEAT_B2 = 44L;
     private static final int BATCH = 100;
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-07-01T08:00:00Z"), ZoneOffset.UTC);
 
@@ -51,20 +51,23 @@ class HeldExpiryServiceTest {
     }
 
     @Test
-    void sweep_만료건마다_좌석반환_SADD_그리고_활성슬롯_DECR() {
-        // 주입 Clock 의 now 로 조회되는지(시간 결정성)도 함께 확인
+    void sweep_만료건은_scheduleId별로_묶어_좌석반환_SADD_와_활성슬롯_DECRBY() {
+        // 주입 Clock 의 now 로 조회되는지(시간 결정성)도 함께 확인.
+        // SCHEDULE_A 는 1건, SCHEDULE_B 는 2건 만료 → scheduleId별 집계(건수·좌석묶음)가 정확한지 본다.
         when(reservationRepository.findExpiredHeldIds(eq(LocalDateTime.now(CLOCK)), any()))
-                .thenReturn(List.of(10L, 20L));
+                .thenReturn(List.of(10L, 20L, 30L));
         when(txHelper.expire(10L)).thenReturn(new ExpiredRelease(SCHEDULE_A, SEAT_A));
         when(txHelper.expire(20L)).thenReturn(new ExpiredRelease(SCHEDULE_B, SEAT_B));
+        when(txHelper.expire(30L)).thenReturn(new ExpiredRelease(SCHEDULE_B, SEAT_B2));
 
         int expired = service.sweep();
 
-        assertThat(expired).isEqualTo(2);
-        verify(preemption).returnSeat(SCHEDULE_A, SEAT_A);
-        verify(admissionService).leave(SCHEDULE_A);
-        verify(preemption).returnSeat(SCHEDULE_B, SEAT_B);
-        verify(admissionService).leave(SCHEDULE_B);
+        assertThat(expired).isEqualTo(3);
+        // scheduleId별 1회 SADD 로 좌석 묶음을 반환 — 인자 전치·집계 누락 방지.
+        verify(preemption).returnSeats(SCHEDULE_A, List.of(SEAT_A));
+        verify(preemption).returnSeats(SCHEDULE_B, List.of(SEAT_B, SEAT_B2));
+        // scheduleId별 만료 건수만큼 한 번에 DECRBY (A:1, B:2).
+        verify(admissionService).leaveAll(Map.of(SCHEDULE_A, 1, SCHEDULE_B, 2));
     }
 
     @Test
@@ -75,15 +78,17 @@ class HeldExpiryServiceTest {
         int expired = service.sweep();
 
         assertThat(expired).isZero();
-        verify(preemption, never()).returnSeat(anyLong(), anyLong()); // 이중 SADD = 오버셀 방지
-        verify(admissionService, never()).leave(anyLong());           // 이중 DECR = 카운터 훼손 방지
+        verify(preemption, never()).returnSeats(any(), any()); // 이중 SADD = 오버셀 방지
+        // 만료 0건이라 빈 맵으로 호출 — 어떤 카운터도 DECR 되지 않음(이중 DECR = 카운터 훼손 방지).
+        verify(admissionService).leaveAll(Map.of());
     }
 
     @Test
-    void sweep_만료대상_없으면_아무것도_안함() {
+    void sweep_만료대상_없으면_전이도_좌석반환도_없음() {
         when(reservationRepository.findExpiredHeldIds(any(), any())).thenReturn(List.of());
 
         assertThat(service.sweep()).isZero();
-        verifyNoInteractions(txHelper, preemption, admissionService);
+        verifyNoInteractions(txHelper, preemption); // 전이·좌석 반환 자체가 없음
+        verify(admissionService).leaveAll(Map.of()); // 빈 배치라 어떤 카운터도 안 건드림(no-op)
     }
 }
