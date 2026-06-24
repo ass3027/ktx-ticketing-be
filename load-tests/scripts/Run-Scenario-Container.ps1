@@ -29,6 +29,9 @@
 .PARAMETER Build
     첫 회차에서 app 이미지를 --build 로 재빌드해 코드 변경을 반영한다(Dockerfile=소스 빌드).
     코드를 바꾼 뒤 측정할 때 필수 — 없으면 옛 이미지로 돌아 변경이 반영되지 않는다(측정 무효).
+.PARAMETER Dashboard
+    k6 web dashboard 를 켜고 시계열 차트를 HTML 로 export 한다(results/{prefix}_dashboard.html).
+    soak(L6) 의 응답시간 우상향(누수) 판정처럼 시계열 추세가 필요한 시나리오에서 켠다.
 .EXAMPLE
     pwsh load-tests/scripts/Run-Scenario-Container.ps1 -Scenario load-tests/scenarios/L2_normal_flow.js -Iterations 3
 .EXAMPLE
@@ -44,7 +47,8 @@ param(
     [int]$HealthWaitSeconds = 120,
     [int]$AdmissionMax = 2000,
     [switch]$PostRunCheck,
-    [switch]$Build
+    [switch]$Build,
+    [switch]$Dashboard
 )
 
 # ── 회차 단계 함수 ──────────────────────────────────────────────────────────
@@ -90,11 +94,13 @@ function Invoke-K6Run {
     # 컨테이너 k6 실행. 결과 종료코드를 반환한다.
     # Tee-Object 로 파일 저장과 동시에 Out-Host 로 콘솔에 표시(k6 기본 출력). Out-Null 금지.
     # 함수 안에서는 Tee 의 파이프 출력이 반환값으로 새므로 Out-Host 로 흡수 → return 만 출력.
-    param([string[]]$Compose, [string]$ContainerScenario, [int]$ScheduleId, [int]$SeatInventoryId, [string]$RunLog)
+    param([string[]]$Compose, [string]$ContainerScenario, [int]$ScheduleId, [int]$SeatInventoryId,
+          [string]$RunLog, [string[]]$DashboardEnv = @())
 
     Write-Host "k6(컨테이너) 실행 → $RunLog" -ForegroundColor Cyan
     docker compose @Compose run --rm `
         -e SCHEDULE_ID=$ScheduleId -e SEAT_INVENTORY_ID=$SeatInventoryId `
+        @DashboardEnv `
         k6 run $ContainerScenario 2>&1 |
         Tee-Object -FilePath $RunLog | Out-Host
     return $LASTEXITCODE
@@ -145,8 +151,14 @@ try {
             -Build ($Build -and $i -eq 1)
 
         $runLog = Join-Path $resultsDir "${ResultPrefix}_container_run_$i.txt"
+        # -Dashboard 시 k6 web dashboard 를 켜고 시계열 차트를 HTML 로 export.
+        # 컨테이너 경로 /work/load-tests/results 는 k6 compose 의 working_dir/volumes 로 호스트 results 에 매핑됨.
+        $dashEnv = if ($Dashboard) {
+            @('-e','K6_WEB_DASHBOARD=true',
+              '-e',"K6_WEB_DASHBOARD_EXPORT=/work/load-tests/results/${ResultPrefix}_dashboard.html")
+        } else { @() }
         $k6Exit = Invoke-K6Run -Compose $compose -ContainerScenario $containerScenario `
-            -ScheduleId $ScheduleId -SeatInventoryId $SeatInventoryId -RunLog $runLog
+            -ScheduleId $ScheduleId -SeatInventoryId $SeatInventoryId -RunLog $runLog -DashboardEnv $dashEnv
 
         if ($PostRunCheck) {
             $checkLog = Join-Path $resultsDir "${ResultPrefix}_container_run_$i.check.txt"
