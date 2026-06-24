@@ -26,4 +26,26 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
      */
     @Query("SELECT r FROM Reservation r JOIN FETCH r.seatInventory WHERE r.id = :id")
     Optional<Reservation> findWithSeatById(@Param("id") Long id);
+
+    /**
+     * 만료시각이 지났는데 아직 HELD 인 예약 수(U-2 정합성 audit). 0 이 정상 — 0 보다 크면
+     * 만료 스케줄러(T3-9)가 밀려 좌석이 회수되지 않은 잔재다. post_run_check.sql ⑤와 동일.
+     */
+    @Query("SELECT COUNT(r) FROM Reservation r WHERE r.status = 'HELD' AND r.expiresAt < :now")
+    long countExpiredHeld(@Param("now") LocalDateTime now);
+
+    /**
+     * 같은 좌석에 활성(HELD/CONFIRMED) 예약이 2건 이상인 좌석 수(U-2 정합성 audit). 0 이 정상 —
+     * 0 보다 크면 한 좌석을 둘 이상이 점유한 오버셀/중복이다. post_run_check.sql ②와 동일.
+     */
+    @Query(value = """
+            SELECT COUNT(*) FROM (
+                SELECT r.seat_inventory_id
+                FROM reservation r
+                WHERE r.status IN ('HELD', 'CONFIRMED')
+                GROUP BY r.seat_inventory_id
+                HAVING COUNT(*) > 1
+            ) dup
+            """, nativeQuery = true)
+    long countSeatsWithMultipleActive();
 }
