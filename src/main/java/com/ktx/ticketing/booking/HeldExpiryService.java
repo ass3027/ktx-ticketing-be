@@ -9,7 +9,10 @@ import org.springframework.stereotype.Service;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * HELD TTL 만료 sweep 오케스트레이터 (T3-9). 만료 대상을 조회해 건별로 복구한다 —
@@ -19,6 +22,10 @@ import java.util.List;
  * 수행한다 — 취소(T3-8)와 동일한 정합성 규칙. 건별 트랜잭션이라 한 건 실패가 배치 전체를 막지 않는다.
  * 조회~전이 사이 사용자 confirm/cancel 경합은 헬퍼의 상태 재확인이 흡수하므로(no-op),
  * 분산 환경 다중 스위퍼도 정합성이 보존된다(중복 작업만 낭비, 락 불필요).
+ *
+ * <p>T4-13: 부수효과(SADD·DECR)를 건별 직렬 호출하던 것을 <b>scheduleId별로 모아 일괄</b>(returnSeats·leaveAll)
+ * 발사한다 — sweep 의 Redis RTT 를 만료 건수가 아닌 schedule 수로 bound. DB 전이는 건별 트랜잭션·@Version
+ * 그대로라 멱등성·경합 흡수는 불변. 부수효과 대상은 여전히 실제 만료된 건뿐이라 정합성 규칙도 동일하다.
  */
 @Service
 @RequiredArgsConstructor
@@ -39,15 +46,22 @@ public class HeldExpiryService {
         List<Long> expiredIds = reservationRepository.findExpiredHeldIds(
                 LocalDateTime.now(clock), PageRequest.of(0, properties.batchSize()));
 
+        // scheduleId → 회수된 좌석 목록. DB 전이는 건별 트랜잭션으로 끝내되, 커밋 후 부수효과만 모은다.
+        Map<Long, List<Long>> seatsBySchedule = new HashMap<>();
         int expired = 0;
         for (Long reservationId : expiredIds) {
             ExpiredRelease released = txHelper.expire(reservationId); // 트랜잭션 + 커밋
-            if (released != null) {                                   // 실제 만료된 경우에만 부수효과
-                preemption.returnSeat(released.scheduleId(), released.seatInventoryId()); // SADD
-                admissionService.leave(released.scheduleId());                            // DECR
+            if (released != null) {                                   // 실제 만료된 경우에만 부수효과 대상
+                seatsBySchedule.computeIfAbsent(released.scheduleId(), k -> new ArrayList<>())
+                        .add(released.seatInventoryId());
                 expired++;
             }
         }
+        // 커밋 후·실제 만료된 건에 한해서만 — 조건·순서 불변, 건별 직렬 2N RTT 를 schedule 수로 접는다.
+        seatsBySchedule.forEach(preemption::returnSeats);                      // scheduleId별 1 SADD
+        Map<Long, Integer> countBySchedule = new HashMap<>();
+        seatsBySchedule.forEach((scheduleId, seats) -> countBySchedule.put(scheduleId, seats.size()));
+        admissionService.leaveAll(countBySchedule);                           // scheduleId별 1 DECRBY
         return expired;
     }
 }

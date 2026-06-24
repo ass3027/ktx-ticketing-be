@@ -4,6 +4,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.util.Map;
+
 /**
  * 입장 제어 — 활성 세션 수를 상한 K 미만으로 유지하며 EntryToken 을 발급한다.
  *
@@ -34,6 +36,16 @@ public class AdmissionService {
     /** 세션 종료(예매 완료/취소/만료) 시 활성 슬롯을 반환한다. T3-8/T3-9 에서 호출. */
     public void leave(Long scheduleId) {
         redis.opsForValue().decrement(activeKey(scheduleId));
+    }
+
+    /**
+     * 만료 sweep(T4-13) 배치 회수 — scheduleId별 만료 건수만큼 활성 슬롯을 한 번에 반환한다.
+     * 건별 DECR N회를 scheduleId당 DECRBY 1회로 접어 sweep 의 Redis RTT 를 건수가 아닌 schedule 수로 bound 한다.
+     * (DECR N회 == DECRBY N 1회 — 키 단위 원자성이라 결과 동일.)
+     */
+    public void leaveAll(Map<Long, Integer> countByScheduleId) {
+        countByScheduleId.forEach((scheduleId, n) ->
+                redis.opsForValue().decrement(activeKey(scheduleId), n));
     }
 
     private String activeKey(Long scheduleId) {

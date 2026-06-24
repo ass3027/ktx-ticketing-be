@@ -41,9 +41,12 @@ booking:
     retry-after: 5s
   expiry:
     # HELD TTL 만료 sweep 1회 최대 처리 건수. 밀린 만료는 다음 sweep 이 이어받는다.
-    batch-size: 100
+    # T4-13: L6 soak 에서 sweep 처리율(구 batch100/interval30s≈3건/s)이 부하의 만료 유입을 못 따라가
+    # expiredHeld 적체·재고 잠금이 발생 → 상한 상향(부수효과는 scheduleId별 배치 SADD/DECRBY 로 묶음).
+    batch-size: 1000
     # sweep 실행 주기(직전 완료~다음 시작 간격). HELD TTL(5분)보다 짧게 둬 만료 좌석을 신속 회수.
-    sweep-interval: 30s
+    # 30s 유휴가 처리율을 지배하던 병목 — 2s 로 단축(유입 없을 땐 빈 sweep 이라 폴링 부하 미미).
+    sweep-interval: 2s
   reconcile:
     # Redis 가용 풀 ↔ DB(SoT) 드리프트 보정 주기. 드리프트는 드물어 만료(30s)보다 덜 잦게.
     interval: 60s
