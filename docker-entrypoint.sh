@@ -19,6 +19,11 @@ CACHE_DIR=/app/aot
 CACHE="$CACHE_DIR/app.aot"
 JAR=/app/app.jar
 
+# JVM tz 를 KST 로 명시 고정(B-1) — naive LocalDateTime 의 now()/저장값이 MySQL·JDBC(Asia/Seoul)와
+# 같은 tz 를 쓰게 한다. TZ env 만으론 base 이미지/JDK 에 따라 안 먹을 수 있어 -Duser.timezone 으로 강제.
+# dump·본 부팅 양쪽에 동일 적용해야 시각 출처가 일관된다.
+TZ_OPT="-Duser.timezone=Asia/Seoul"
+
 mkdir -p "$CACHE_DIR"
 
 # 재 dump 필요 판단: 캐시 없음 OR jar 가 캐시보다 최신(코드 변경).
@@ -32,7 +37,7 @@ elif [ "$JAR" -nt "$CACHE" ]; then
 fi
 
 if [ "$NEED_DUMP" -eq 1 ]; then
-  if java -XX:AOTCacheOutput="$CACHE" \
+  if java $TZ_OPT -XX:AOTCacheOutput="$CACHE" \
           -Dspring.context.exit=onRefresh \
           -jar "$JAR"; then
     echo "[entrypoint] AOT cache dump 완료: $CACHE ($(du -h "$CACHE" | cut -f1))"
@@ -45,7 +50,7 @@ else
 fi
 
 if [ -f "$CACHE" ]; then
-  exec java -XX:AOTCache="$CACHE" -jar "$JAR"
+  exec java $TZ_OPT -XX:AOTCache="$CACHE" -jar "$JAR"
 else
-  exec java -jar "$JAR"
+  exec java $TZ_OPT -jar "$JAR"
 fi

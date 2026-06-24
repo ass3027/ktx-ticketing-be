@@ -12,6 +12,10 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       SPRING_PROFILES_ACTIVE: local
+      # tz 통일(B-1) — JVM·MySQL·JDBC(serverTimezone=Asia/Seoul) 를 모두 KST 로 못박아 naive
+      # LocalDateTime 의 저장·비교 tz 를 일치시킨다. KTX(단일 리전)라 운행시각(KST 벽시계)과도 정합.
+      # (이전엔 JVM=OS기본 KST / MySQL 세션=UTC 불일치로 9h skew → expiresAt 만료 오판, U-2 audit 검출.)
+      TZ: Asia/Seoul
       # 입장 제어 상한 K — 잠정 기본 100. 부하측정(L1 등)에선 환경변수로 우회:
       #   $env:BOOKING_ADMISSION_MAX_ACTIVE=2000 후 docker compose up.
       # base 기본값으로 둬 모든 compose 조합(-f ... -f k6.yml 포함)이 동일 app 정의를
@@ -46,6 +50,8 @@ services:
       MYSQL_DATABASE: ktx_ticketing
       MYSQL_USER: ktx
       MYSQL_PASSWORD: ktx1234
+      # 컨테이너 OS tz 를 KST 로 → MySQL 세션 tz(SYSTEM)도 KST. app/JDBC 와 통일(B-1).
+      TZ: Asia/Seoul
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
