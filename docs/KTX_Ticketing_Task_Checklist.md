@@ -9,7 +9,7 @@
 ## 🚨 긴급 처리 (임시 · 기존 페이즈와 별개)
 > 진행 중 발견된 선행 차단 이슈. 정규 task(P4~) 재개 전 아래를 먼저 처리한다. 완료 시 본 섹션 정리.
 
-- [ ] **U-2** k6 단독 SLO/정합성 판정 — 별도 ps1 사후 SQL 확인을 k6 teardown 게이트로 **병합**. 앱에 읽기전용 `/internal/consistency`(availDrift·expiredHeld·status 정합성, `ReconciliationService` 비교 로직 재사용·**mutation 없음**, `@Profile` 가드) 추가 → 각 시나리오 `teardown()` 에서 호출, `Counter('consistency_violation')` + `threshold count==0` 로 승격(teardown 메트릭→threshold 반영 **실측 완료**). ps1 은 오케스트레이션(컨테이너·env·health·리셋)만 남김. **선행: U-1**(재예매 정상화 후라야 churn 시나리오 드리프트가 의미). 단계: ①audit 서비스 → ②엔드포인트 → ③teardown 게이트(L1→L6→L5).
+- [x] **U-2** k6 단독 SLO/정합성 판정 — ps1 사후 SQL 확인을 k6 teardown 게이트로 **병합** 완료(2026-06-24). 읽기전용 `/internal/consistency`(`ConsistencyAuditService`/`ConsistencyController`, `@Profile("!prod")`) 추가 — `ReconciliationService` 의 보정 없는 diff 재사용(mutation 없음)으로 availDrift, `countExpiredHeld`/`countSeatsWithMultipleActive` 로 expiredHeld·statusViolation 집계. L1·L4·L5·L6 `teardown()` 에서 호출 → `Counter('consistency_violation')`+`threshold count==0` 승격. 통합 테스트 5종(델타 격리). **실측 검증**: L1 smoke green(violation=0), **L6 1회에서 게이트가 기존 B-1(tz skew) 검출**(expiredHeld≈3,700·availDrift/statusViolation=0 → 오버셀 아님, `docs/results/P4_Result.md` T4-8). 부수: 러너 `-Build`(코드 변경 반영)·L5/L6 `teardownTimeout`(긴 audit 대기 timeout 함정) 수정. 선행 U-1=B-2(완료).
 
 ---
 
@@ -20,11 +20,11 @@
 | P1 설계 확정 | 6 | 6 | 100% | M1 ✅ |
 | P2 핵심 PoC | 5 | 5 | 100% | M2 ✅ |
 | P3 기능 구현 | 13 | 13 | 100% | M3 ✅ |
-| P4 성능 측정 | 12 | 2 | 17% | M4 |
+| P4 성능 측정 | 12 | 3 | 25% | M4 |
 | P5 비동기 | 3 | 0 | 0% | — |
 | P6 산출물 | 7 | 0 | 0% | M5 |
 | P7 심화 산출물 (110%) | 3 | 0 | 0% | — |
-| **합계** | **53** | **30** | **57%** | |
+| **합계** | **53** | **31** | **58%** | |
 
 ---
 
@@ -76,7 +76,7 @@
 - [x] **T4-3** L1 직접선택 단일좌석 경쟁(정합성) → 호스트 JVM 1,000 VU 3회 **oversell=0·중복=0·win=1 일관 달성**(S4). Docker Desktop NAT 포화로 인한 컨테이너 측정 refused(631)를 격리 실험으로 규명→호스트 실행(refused≈0)으로 우회. `Run-L1-Host.ps1` 신설, BASE_URL 127.0.0.1 고정, L1 `handleSummary` 메트릭 복원. 결과: `results/P4_Result.md`.
 - [x] **T4-4** L2/L2b 정상·자동배정 처리량 → 컨테이너 k6 3회. **L2**(혼합부하 1,000VU 8분): 예매 p95 348~408ms(≤500 ✅)·TPS 833~863(≥200 ✅)·5xx 0.03~0.04%(<1% ✅) 합격, 단 **조회 p95 ~0.9s SLO(200ms) 미달**(→ 캐시/경합 가설, L3·E3 Before 로 활용). **L2b**(AUTO shared-iter): 1,000석 정확 매진(reserve_ok=1000·sold_out=1000)·oversell 0·중복 0(SPOP 원자 선점). 결과: `results/P4_Result.md`.
 - [ ] **T4-5** L3 조회 폭주
-- [ ] **T4-6** L4 입장 초과
+- [x] **T4-6** L4 입장 초과 → 컨테이너 k6 본 측정 3회(K=100·RATE=500·3분+램프) 일관 그린. server_errors=0(B-2 수정 전 100)·admission_reject_rate 85.7~85.8%(초과분 429 흡수, S5 정상)·http_req_failed{entry}=0%·dropped=0·reserve p95 69~97ms(<500)·k6Exit 0. B-2 재예매 수정을 smoke→본 측정으로 확정. 결과: `results/P4_Result.md`.
 - [ ] **T4-7** L5 임계점 탐색 → **활성자 상한 K 역산·확정**
 - [ ] **T4-8** L6 지속 부하(soak)
 - [ ] **T4-9** 실험 E1(선점/락)·E2(입장 제어)·E3(조회 캐시) Before/After + 그래프
@@ -123,7 +123,7 @@
 > 특정 페이즈 DoD 에 속하지 않는 후속 개선. 착수 시 독립 브랜치 + 계획 승인.
 - [x] **B-2** 좌석 재예매 불가 버그 수정 (A-2 활성 한정 부분 유니크) — `reservation.seat_inventory_id` 의 상태-무관 전역 유니크가 취소/만료로 되돌아온 좌석의 재예매를 막아 `Duplicate entry`→500. **해결**: 스키마 관리 ddl-auto→Flyway 전환(`V1__baseline`/`V2__active_seat_unique`), `V2` 가 생성 컬럼 `active_seat_inventory_id`(활성일 때만 좌석id, 아니면 NULL)+`uk_active_seat` 로 "좌석당 활성 1건" 불변식만 강제(오버셀 DB 방어선 유지)·취소/만료는 NULL 로 공존 허용→재예매 정상화. 회귀 테스트 3종(`BookingIntegrationTest`: 취소후·만료후 재예매 성공, 활성 2건 차단). L4 smoke 그린(server_errors 100→0). 설계: `docs/plans/Seat_Rebooking_Unique_Constraint_Fix_Plan.md`. 연관: T3-9·T3-11·T4-6.
 - [ ] **B-3** 입장 슬롯 누수 — "입장(active INCR) 후 예매가 생성되지 않으면" 슬롯을 회수할 경로가 없다(`AdmissionService.leave` 는 예약 confirm/cancel/만료에서만 호출). 예매 실패(예외)·중도 이탈 시 슬롯이 EntryToken TTL 만료로도 회수되지 않으면 영구 점유 → K 조기 포화. (B-2 수정으로 *Duplicate entry 5xx* 발 누수는 해소됐으나 구조적 결함은 잔존.) 점검: EntryToken TTL 만료 시 `leave` 보상이 있는지 확인, 없으면 만료 훅 또는 예매 실패 응답 경로에서 보상. 발견: 2026-06-21 L4. 연관: 입장 제어(`AdmissionService`)·T4-6.
-- [ ] **B-1** 시스템 사건 시각 필드 `LocalDateTime` → `Instant` 전환 (zone 의존 제거) — 대상: `Reservation`(heldAt/expiresAt/confirmedAt/cancelledAt)·`SeatInventory`(heldAt/expiresAt)·`User.createdAt` 등 "절대 시각" 필드. **운행 일정(`Schedule.departureTime/arrivalTime`)은 KST 벽시계 표시 의미라 `LocalDateTime` 유지**(전환 대상 아님). 동기: 현재 `expiresAt`(naive `LocalDateTime`)을 프로덕션 `Clock.systemDefaultZone()`으로 찍어 저장·비교 → 저장·비교 zone 이 같아야만 정합(단일 서버에선 동작하나 OS zone 변경/DST·UTC 고정 리팩터링 시 9h skew 로 `expiresAt<now` 오판 위험). `Instant` 는 절대 시각이라 비교에서 zone 이 소거됨 → `BookingIntegrationTest` sweep Clock 의 zone 주석(systemDefault 강제) 자체가 불필요해짐. 범위: 엔티티 4종 + DB 컬럼 타입(`DATETIME`→`TIMESTAMP`/마이그레이션) + 쿼리(`findExpiredHeldIds` 등) + DTO(`expiresAt` 노출 형식) + 기존 테스트. `Clock.instant()` 를 시각 출처로 사용(현재 `LocalDateTime.now(clock)` 에서 한 단계 축약).
+- [ ] **B-1** 시스템 사건 시각 필드 `LocalDateTime` → `Instant` 전환 (zone 의존 제거) — 대상: `Reservation`(heldAt/expiresAt/confirmedAt/cancelledAt)·`SeatInventory`(heldAt/expiresAt)·`User.createdAt` 등 "절대 시각" 필드. **운행 일정(`Schedule.departureTime/arrivalTime`)은 KST 벽시계 표시 의미라 `LocalDateTime` 유지**(전환 대상 아님). 동기: 현재 `expiresAt`(naive `LocalDateTime`)을 프로덕션 `Clock.systemDefaultZone()`으로 찍어 저장·비교 → 저장·비교 zone 이 같아야만 정합(단일 서버에선 동작하나 OS zone 변경/DST·UTC 고정 리팩터링 시 9h skew 로 `expiresAt<now` 오판 위험). `Instant` 는 절대 시각이라 비교에서 zone 이 소거됨 → `BookingIntegrationTest` sweep Clock 의 zone 주석(systemDefault 강제) 자체가 불필요해짐. 범위: 엔티티 4종 + DB 컬럼 타입(`DATETIME`→`TIMESTAMP`/마이그레이션) + 쿼리(`findExpiredHeldIds` 등) + DTO(`expiresAt` 노출 형식) + 기존 테스트. `Clock.instant()` 를 시각 출처로 사용(현재 `LocalDateTime.now(clock)` 에서 한 단계 축약). **실측 확인(2026-06-24 L6/U-2 audit)**: 컨테이너(app=JVM 기본 KST / MySQL 세션 SYSTEM=UTC) 환경에서 `expiresAt` 이 KST 벽시계(예: 13:42)로 naive 저장돼 MySQL `NOW()`(UTC 05:05) 기준으론 미만료지만 앱 `Clock`(KST) 기준으론 만료로 보이는 9h skew 가 재현됨 → `/internal/consistency` 의 `expiredHeld≈3,700` 으로 검출(availDrift·statusViolation=0, 오버셀/드리프트 없음). 즉 가설이 아니라 환경 의존 실결함으로 확정. 연관: T4-8 L6 결과(`docs/results/P4_Result.md`)·U-2 audit.
 
 ---
 

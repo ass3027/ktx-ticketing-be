@@ -16,9 +16,9 @@
 | T4-3 L1 직접선택 단일좌석 경쟁(정합성) | ✅ | **oversell=0·중복=0 3회 일관 달성** (호스트 JVM, refused≈0). 1 win / 999 정상 패배 |
 | T4-4 L2/L2b 정상·자동배정 처리량 | ✅ | L2: 예매 p95≤500ms·TPS 833~863·5xx 0.03% 합격 / **list p95~0.9s SLO(200ms) 미달**(→L3·E3). L2b: AUTO 1000석 정확 매진·oversell 0 |
 | T4-5 L3 조회 폭주 | ⏳ | |
-| T4-6 L4 입장 초과 | 🟡 | **B-2 버그 수정 후 smoke(1회) 그린**: server_errors 0(수정 전 100)·reject 85.8%·k6Exit 0. 본 측정(3회) 미실시(실측자) |
+| T4-6 L4 입장 초과 | ✅ | **본 측정 3회 일관 그린**(2026-06-24, K=100·RATE=500): server_errors 0(수정 전 100)·reject 85.7~85.8%·reserve p95 69~97ms·dropped 0·k6Exit 0. B-2 수정 확정 |
 | T4-7 L5 임계점 탐색(K 확정) | ⏳ | `booking.admission.max-active` 잠정값 100 → L5 결과로 확정 |
-| T4-8 L6 지속 부하(soak) | ⏳ | |
+| T4-8 L6 지속 부하(soak) | 🟡 | **부하 1회 그린**(300VU·33m·K=100): 5xx 0%·checks 100%·reserve p95 57ms·list p95 9.8ms·sold_out 0. 단 **U-2 정합성 게이트가 B-1(tz skew) 검출** → expiredHeld≈3,700(availDrift·statusViolation=0, 오버셀 없음). 시계열 추세 판정 + B-1 수정 후 재측정 잔여 |
 | T4-9 E1·E2·E3 Before/After | ⏳ | E1-before 토글(`booking.preemption.enabled=false`) 구현 필요 |
 | T4-10 E5 가상 스레드 | ⏳ | |
 | T4-11 E6 분산 락 라이브러리 비교 | ⏳ | `DistributedLock` 추상화는 완료 |
@@ -339,10 +339,11 @@ oversell 0, 매진 정확 수렴). 유일한 미달은 **조회(list) 지연**�
 
 ---
 
-## T4-6 — L4 입장 초과 (B-2 버그 수정 검증, smoke 1회 그린)
+## T4-6 — L4 입장 초과 (본 측정 3회 그린, ✅)
 
-> 상태: smoke(`-Iterations 1`) 그린으로 **B-2(좌석 재예매 불가) 수정**을 검증. 본 측정(3회 공식 수치)은
-> 실측자 책임(본 문서 사용법). 발견 경위·수정 설계는 `docs/plans/Seat_Rebooking_Unique_Constraint_Fix_Plan.md`.
+> 상태: **본 측정 3회 일관 그린**(2026-06-24, 컨테이너 러너 K=100·RATE=500·3분+램프). smoke 1회로
+> 검증했던 **B-2(좌석 재예매 불가) 수정**이 3회 측정으로 확정됐다. 발견 경위·수정 설계는
+> `docs/plans/Seat_Rebooking_Unique_Constraint_Fix_Plan.md`.
 
 ### 배경 — 왜 L4 가 깨졌나
 L4 는 슬롯 churn(입장→예매→1~2s 점유→**취소**→슬롯/좌석 반환)으로 입장↔거절 steady state 를 만든다.
@@ -369,3 +370,55 @@ L4 는 슬롯 churn(입장→예매→1~2s 점유→**취소**→슬롯/좌석 �
 - **부수 효과 해소**: Before 의 5xx 100 건은 입장 슬롯 100 개를 누수시켜 K 조기 포화·입장 급감을
   유발했었다. 수정으로 5xx 가 사라져 이 경로의 누수도 사라짐. (단 "입장 후 예매 미생성 시 슬롯 회수"
   일반 케이스는 독립 결함 → 백로그 **B-3**.)
+
+### 본 측정 3회 (K=100, RATE=500 TPS, 3분 + 램프, 컨테이너 러너 — 2026-06-24)
+| 회차 | `server_errors` | `http_req_failed{type:entry}` | `admission_reject_rate` | `dropped_iterations` | reserve `p(95)` | k6Exit |
+|------|------|------|------|------|------|------|
+| 1 | 0 | 0.00% (0/104,999) | 85.72% | 0 | 69.08ms | 0 |
+| 2 | 0 | 0.00% (0/104,999) | 85.83% | 0 | 97.05ms | 0 |
+| 3 | 0 | 0.00% (0/104,999) | 85.81% | 0 | 79.33ms | 0 |
+| **합격선** | <10 | <1% | >0.5 | ==0 | <500ms | 0 |
+
+- 3회 모두 전 threshold 충족 (refused=0, http_reqs≈134.8K/회). 초과분이 ~85.8% 로 429 흡수되고
+  예매 경로 진짜 5xx 는 0 — 입장 제어(S5)가 일관되게 동작함을 본 측정으로 확정.
+- reserve p95 의 회차 변동(69~97ms)은 모두 SLO(500ms) 대비 큰 여유 안에 있어 합격 판정에 영향 없음.
+
+---
+
+## T4-8 — L6 지속 부하 (soak) · 1회 (🟡 부하 그린 / 정합성 게이트가 B-1 검출)
+
+> 상태: 부하 1회(300VU·33분·K=100, 2026-06-24). **U-2 정합성 자동 게이트**(`/internal/consistency`
+> teardown audit)를 처음 실측 적용한 회차. 부하 SLO 는 전부 그린이나, **게이트가 기존 B-1(timezone
+> skew) 결함을 검출**해 `consistency_violation` red(k6Exit 99). 시계열 추세 판정 + B-1 수정 후 재측정 잔여.
+
+### 부하 지표 (전부 그린)
+| 지표 | 값 | 합격선 | 판정 |
+|------|------|------|------|
+| `http_req_failed` (진짜 5xx) | **0.00%** (0/433,790) | <1% | ✓ |
+| `checks` (confirm/list) | **100.00%** (252,444/0) | >99% | ✓ |
+| reserve `p(95)` | **57.18ms** | <500 | ✓ |
+| reserve `p(99)` | <1,000 (threshold ✓) | <1,000 | ✓ |
+| list `p(95)` | **9.84ms** | <200 | ✓ |
+| `entry_shed` (입장 차단) | 140,927 | 관측 | 입장 제어 동작 |
+| `sold_out` | **0** | 관측 | 50 스케줄 분산 충분 |
+| `dropped`/`interrupted` | 0 | — | 부하 안정 |
+
+### 정합성 게이트가 검출한 것 — B-1(tz skew), 오버셀 아님
+| audit 항목 | 값 | 의미 |
+|------|------|------|
+| `availDrift` | **0** | Redis 가용 풀 ↔ DB 드리프트 없음 |
+| `statusViolation` | **0** | 좌석당 활성 2건↑ 없음 = **오버셀/중복 0** |
+| `expiredHeld` | **≈3,700** | 만료 미회수로 *보이는* HELD — 실제론 tz skew 오판 |
+
+- **근본 원인 = B-1 timezone skew**(백로그 기록의 가설이 환경 의존 실결함으로 확정):
+  컨테이너에서 app JVM 기본 tz=KST, MySQL 세션 tz=SYSTEM(UTC) 불일치. `expiresAt` 이 KST 벽시계
+  (예: `13:42`)로 naive 저장돼 — DB `NOW()`(UTC `05:05`) 기준으론 **미만료**(`is_expired=0`,
+  실측 `SELECT (expires_at<NOW())` 로 확인)지만, audit 의 앱 `Clock`(KST) 기준으론 만료로 집계됨(9h skew).
+- **U-2 기능 관점에선 의도된 성공**: soak audit 게이트가 *진짜* 정합성 결함(B-1)을 자동 검출했다.
+  오버셀·드리프트(`availDrift`·`statusViolation`)는 0 이라 좌석 정합성 자체는 건전.
+- **잔여**: ① B-1 수정(별도 작업) 후 게이트 green 재확인 ② L6 합격의 응답시간 우상향 판정은 시계열
+  출력(`--out json`)이 별도 필요 — 이번 컨테이너 러너 실행 범위 밖.
+
+> ⚠️ teardown 함정(이번에 해소): k6 기본 `teardownTimeout=60s`. teardown 이 HELD TTL 수렴을
+> 기다리느라(330s) 60s 에 강제 종료되면 audit 이 아예 호출되지 않아 `consistency_violation=0`(위양성
+> 통과)로 보인다(직전 1회차에서 실제 발생). L6 `teardownTimeout: '360s'`·L5 `'150s'` 로 수정.
