@@ -114,7 +114,28 @@ E1/E3 Before 실행 전: 앱에 토글 환경변수 필요 (T4-9 구현 후 확�
 | L3 | 조회 p95 | ≤ 200ms |
 | L4 | 5xx 율 | < 1% (429/503 제외) |
 
-## 부하 후 정합성 확인
+## 부하 후 정합성 자동 판정 (U-2)
+
+L1·L4·L5·L6 시나리오는 `teardown()` 에서 앱의 읽기전용 `GET /internal/consistency` 를 호출해
+정합성을 **자동 판정**한다 — ps1 사후 SQL 수동 확인이 k6 게이트로 병합됐다.
+
+- audit 3항목: `availDrift`(Redis 가용 풀↔DB AVAILABLE 드리프트, in-flight 선점 제외)·
+  `expiredHeld`(만료 미회수 HELD)·`statusViolation`(좌석당 활성 2건↑ = 오버셀/중복). 합계를
+  `Counter('consistency_violation')` 로 승격하고 `threshold count==0` 으로 판정 → 위반 시 k6Exit≠0.
+- audit 은 **읽기전용**(mutation 없음)이라 측정 결과를 오염시키지 않는다(`ReconciliationService` 의 보정
+  없는 diff 재사용). L5/L6 은 reconcile/sweep·HELD TTL 수렴을 기다린 뒤 audit 한다(teardown 내 대기).
+- 엔드포인트는 `@Profile("!prod")` 가드 — 부하/개발 프로파일에서만 노출, 프로덕션 미등록.
+
+> **코드 변경 후 측정 시**: 러너에 `-Build` 를 줘 첫 회차에서 app 이미지를 재빌드해야 변경이 반영된다
+> (Dockerfile=소스 빌드, `--force-recreate` 만으로는 옛 이미지가 돈다).
+> ```powershell
+> pwsh load-tests/scripts/Run-Scenario-Container.ps1 `
+>   -Scenario load-tests/scenarios/L4_admission_overload.js -AdmissionMax 100 -Build
+> ```
+
+### 수동 확인 (선택)
+
+자동 게이트와 별개로 직접 들여다보려면:
 
 ```bash
 mysql -h127.0.0.1 -uktx -pktx1234 ktx_ticketing

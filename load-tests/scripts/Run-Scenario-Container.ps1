@@ -26,6 +26,9 @@
 .PARAMETER AdmissionMax
     app 의 BOOKING_ADMISSION_MAX_ACTIVE(K). 기본 2000=입장 제어 우회(L1/L2).
     L4 처럼 입장 제어를 발동시켜야 하면 100(운영값) 을 준다.
+.PARAMETER Build
+    첫 회차에서 app 이미지를 --build 로 재빌드해 코드 변경을 반영한다(Dockerfile=소스 빌드).
+    코드를 바꾼 뒤 측정할 때 필수 — 없으면 옛 이미지로 돌아 변경이 반영되지 않는다(측정 무효).
 .EXAMPLE
     pwsh load-tests/scripts/Run-Scenario-Container.ps1 -Scenario load-tests/scenarios/L2_normal_flow.js -Iterations 3
 .EXAMPLE
@@ -40,7 +43,8 @@ param(
     [int]$SeatInventoryId = 1,
     [int]$HealthWaitSeconds = 120,
     [int]$AdmissionMax = 2000,
-    [switch]$PostRunCheck
+    [switch]$PostRunCheck,
+    [switch]$Build
 )
 
 # ── 회차 단계 함수 ──────────────────────────────────────────────────────────
@@ -58,10 +62,14 @@ function Restart-App {
     # app 재생성 후 healthy 대기 + admission(K) 주입값 보장.
     # reset 후 seed/워밍업(DataInitializer/AvailPoolWarmup, 부팅 1회)을 다시 태운다.
     # AOT 캐시는 named volume 에 보존돼 재 dump 없이 빠르게 뜬다.
-    param([string[]]$Compose, [int]$AdmissionMax, [int]$HealthWaitSeconds)
+    param([string[]]$Compose, [int]$AdmissionMax, [int]$HealthWaitSeconds, [bool]$Build)
 
-    Write-Host "=== app 재생성 (단일 조합, admission=$AdmissionMax env) ===" -ForegroundColor Cyan
-    docker compose @Compose up -d --force-recreate app 2>&1 | Out-Null
+    # Dockerfile 은 소스에서 빌드(멀티스테이지)하므로, 코드 변경을 반영하려면 --build 가 필요하다.
+    # --force-recreate 만으로는 기존 이미지로 컨테이너만 새로 만들어 옛 코드가 돈다(측정 무효).
+    # 캐시가 있어 변경 없으면 빠르므로 -Build 회차에 한해 재빌드한다.
+    $recreate = if ($Build) { '--build' } else { '--force-recreate' }
+    Write-Host "=== app 재생성 ($recreate, admission=$AdmissionMax env) ===" -ForegroundColor Cyan
+    docker compose @Compose up -d $recreate app 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "app 재기동 실패 (exit $LASTEXITCODE)" }
 
     Write-Host "=== app healthy 대기 (최대 ${HealthWaitSeconds}s) ===" -ForegroundColor Cyan
@@ -132,7 +140,9 @@ try {
         Write-Host "`n############### $ResultPrefix(Container) 회차 $i / $Iterations ###############" -ForegroundColor Cyan
 
         Reset-SeedState
-        Restart-App -Compose $compose -AdmissionMax $AdmissionMax -HealthWaitSeconds $HealthWaitSeconds
+        # 코드 변경 반영용 재빌드는 첫 회차에만(-Build 지정 시). 이후 회차는 같은 이미지로 recreate.
+        Restart-App -Compose $compose -AdmissionMax $AdmissionMax -HealthWaitSeconds $HealthWaitSeconds `
+            -Build ($Build -and $i -eq 1)
 
         $runLog = Join-Path $resultsDir "${ResultPrefix}_container_run_$i.txt"
         $k6Exit = Invoke-K6Run -Compose $compose -ContainerScenario $containerScenario `
