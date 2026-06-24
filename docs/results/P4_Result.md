@@ -416,7 +416,11 @@ L4 는 슬롯 churn(입장→예매→1~2s 점유→**취소**→슬롯/좌석 �
   실측 `SELECT (expires_at<NOW())` 로 확인)지만, audit 의 앱 `Clock`(KST) 기준으론 만료로 집계됨(9h skew).
 - **U-2 기능 관점에선 의도된 성공**: soak audit 게이트가 *진짜* 정합성 결함(B-1)을 자동 검출했다.
   오버셀·드리프트(`availDrift`·`statusViolation`)는 0 이라 좌석 정합성 자체는 건전.
-- **잔여**: ① B-1 수정(별도 작업) 후 게이트 green 재확인 ② L6 합격의 응답시간 우상향 판정은 시계열
+- **B-1 해소(2026-06-24, 경로 A)**: 환경 tz 를 전부 KST 로 통일(app/mysql `TZ: Asia/Seoul`,
+  entrypoint `-Duser.timezone=Asia/Seoul`, JDBC `serverTimezone=Asia/Seoul` 유지)해 skew 제거.
+  검증: 예매 1건의 `expires_at`·DB `NOW()` 모두 KST → `is_expired=0`·audit `expiredHeld=0`
+  (이전 9h skew 재현 없음). 이 red 의 원인은 제거됨 — L6 재측정 시 게이트 green 기대.
+- **잔여**: ① B-1 해소 반영한 L6 재측정으로 게이트 green 최종 확인 ② 응답시간 우상향 판정은 시계열
   출력(`--out json`)이 별도 필요 — 이번 컨테이너 러너 실행 범위 밖.
 
 > ⚠️ teardown 함정(이번에 해소): k6 기본 `teardownTimeout=60s`. teardown 이 HELD TTL 수렴을
