@@ -28,7 +28,7 @@ import exec from 'k6/execution';
 import { Counter } from 'k6/metrics';
 import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
 import { SCHEDULE_COUNT, DEP, ARR, FROM_DATE } from '../common/config.js';
-import { userIds, getEntryToken, bookAuto, confirmReservation, listSchedules } from '../common/helpers.js';
+import { userIds, getEntryToken, bookAuto, confirmReservation, listSchedules, checkConsistency } from '../common/helpers.js';
 
 // 409 경쟁패배·410 매진·429/503 입장제어 = 설계상 의도된 응답 → 서버오류 아님.
 // 이래야 http_req_failed: rate<0.01 이 "진짜 5xx<1%" SLO 자동 단언이 된다.
@@ -38,8 +38,11 @@ http.setResponseCallback(http.expectedStatuses({ min: 200, max: 299 }, 409, 410,
 // 경로를 못 탔다(전제 붕괴)"는 신호 — 침묵 통과를 막는다.
 const entryShed = new Counter('entry_shed');
 const soldOut = new Counter('sold_out');
+const consistencyViolation = new Counter('consistency_violation'); // 부하 후 정합성 위반 합계 (U-2)
 
 export const options = {
+    // teardown 이 HELD TTL(5분) 수렴을 기다린 뒤 audit 하므로 기본 60s 를 넘긴다. 대기(330s)+audit 왕복 여유.
+    teardownTimeout: '360s',
     scenarios: {
         L6: {
             executor: 'ramping-vus',
@@ -55,6 +58,7 @@ export const options = {
         'http_req_duration{type:list}':    ['p(95)<200'],
         'http_req_failed': ['rate<0.01'], // 보정 후: 진짜 5xx<1%
         'checks': ['rate>0.99'],          // confirm/list 실패를 exit code 로 승격(락·생명주기 누수 신호)
+        consistency_violation: ['count==0'], // 부하 후 좌석/카운터 드리프트·만료 미회수(U-2) 자동 판정
     },
 };
 
@@ -87,6 +91,18 @@ export default function () {
     }
 
     sleep(2);
+}
+
+// 부하 종료 후 정합성 audit. L6 는 HELD 를 의도적으로 방치(만료 검증)하므로, 만료 스케줄러가
+// HELD TTL(5분)+sweep 지연을 따라잡을 시간을 기다린 뒤 audit 해야 위양성(아직 sweep 전 만료 HELD)을
+// 피한다 — 명세의 "HELD TTL 경과 후 post_run_check.sql ⑤④ 검증"을 teardown 으로 자동화한 것.
+export function teardown() {
+    sleep(330); // HELD TTL 5분 + sweep(30s) 여유
+    const violations = checkConsistency();
+    if (violations !== 0) {
+        consistencyViolation.add(violations === -1 ? 1 : violations);
+        console.error(`[L6] CONSISTENCY VIOLATION: ${violations} (audit /internal/consistency)`);
+    }
 }
 
 export function handleSummary(data) {

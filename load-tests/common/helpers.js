@@ -93,6 +93,22 @@ export function cancelReservation(token, reservationId) {
 }
 
 /**
+ * 부하 후 정합성 audit 호출(U-2). 앱의 읽기전용 `/internal/consistency`(mutation 없음)를 쳐서
+ * availDrift·expiredHeld·statusViolation 합산 위반 수를 얻는다. 시나리오 `teardown()` 에서 호출해
+ * `Counter('consistency_violation')` 로 승격하면 `threshold count==0` 으로 ps1 사후 SQL 없이 자동 판정된다.
+ *
+ * @returns {number} totalViolations — 0 이면 정합. 엔드포인트 호출 실패(비200)는 -1 로 표기해
+ *                   teardown 이 위반으로 처리(침묵 통과 방지).
+ */
+export function checkConsistency() {
+    const res = http.get(`${BASE_URL}/internal/consistency`, { tags: { type: 'audit' } });
+    if (res.status !== 200) {
+        return -1;
+    }
+    return res.json('availDrift') + res.json('expiredHeld') + res.json('statusViolation');
+}
+
+/**
  * 운행 리스트 조회.
  */
 export function listSchedules(dep, arr, from) {

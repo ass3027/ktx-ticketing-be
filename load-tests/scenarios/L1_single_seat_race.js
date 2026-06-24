@@ -21,10 +21,12 @@ import { check } from 'k6';
 import { Counter } from 'k6/metrics';
 import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
 import { SCHEDULE_ID, SEAT_INVENTORY_ID } from '../common/config.js';
-import { userIds, getEntryToken, bookSeat } from '../common/helpers.js';
+import { userIds, getEntryToken, bookSeat, checkConsistency } from '../common/helpers.js';
 
-// 오버셀은 reserve_ok==1 threshold 로 간접 검증, 최종 판정은 DB(post_run_check.sql).
+// 오버셀은 reserve_ok==1 threshold 로 간접 검증 + teardown 의 정합성 audit(U-2)으로 자동 확정.
 const reserveOk = new Counter('reserve_ok');
+// 부하 후 정합성 위반 합계(availDrift+expiredHeld+statusViolation). teardown 게이트가 채운다.
+const consistencyViolation = new Counter('consistency_violation');
 
 // VU 수 = 경쟁자 수. setup 토큰 발급 루프와 executor 가 같은 값을 쓰도록 단일 상수로 묶는다.
 const VU_COUNT = 1000;
@@ -45,6 +47,7 @@ export const options = {
     thresholds: {
         reserve_ok: ['count==1'],
         http_req_failed: ['rate<0.01'], // 999 패배자가 깨끗한 4xx 인지 — 5xx 누수 가드
+        consistency_violation: ['count==0'], // 부하 후 Redis-DB 정합성(U-2) — ps1 사후 SQL 대체
     },
 };
 
@@ -73,6 +76,16 @@ export default function (data) {
 
     if (check(res, { 'status is 201': (r) => r.status === 201 })) {
         reserveOk.add(1);
+    }
+}
+
+// 부하 종료 후 1회 정합성 audit → 위반 합계를 Counter 로 승격(threshold count==0 판정).
+// audit 은 읽기전용(mutation 없음)이라 측정 결과를 오염시키지 않는다.
+export function teardown() {
+    const violations = checkConsistency();
+    if (violations !== 0) {
+        consistencyViolation.add(violations === -1 ? 1 : violations);
+        console.error(`[L1] CONSISTENCY VIOLATION: ${violations} (audit /internal/consistency)`);
     }
 }
 

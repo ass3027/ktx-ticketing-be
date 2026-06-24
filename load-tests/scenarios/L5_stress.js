@@ -33,10 +33,10 @@
 import { check, sleep } from 'k6';
 import http from 'k6/http';
 import exec from 'k6/execution';
-import { Rate } from 'k6/metrics';
+import { Rate, Counter } from 'k6/metrics';
 import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
 import { SCHEDULE_COUNT, DEP, ARR, FROM_DATE } from '../common/config.js';
-import { userIds, getEntryToken, bookAuto, cancelReservation, listSchedules } from '../common/helpers.js';
+import { userIds, getEntryToken, bookAuto, cancelReservation, listSchedules, checkConsistency } from '../common/helpers.js';
 
 // 409 경쟁패배·410 매진·429/503 입장제어 = 설계상 의도된 응답 → 서버오류 아님.
 // 이래야 http_req_failed 가 "진짜 5xx/연결오류 = 붕괴 신호"만 의미한다.
@@ -44,6 +44,7 @@ http.setResponseCallback(http.expectedStatuses({ min: 200, max: 299 }, 409, 410,
 
 // K 역산용: 예매 경로가 입장 제어(429/503)에 막힌 비율. http_req_failed 와 분리해 "백프레셔 시작점"을 본다.
 const backpressure = new Rate('backpressure');
+const consistencyViolation = new Counter('consistency_violation'); // 부하 후 정합성 위반 합계 (U-2)
 
 const HOLD_SECONDS = 1; // 예매 후 좌석 점유 시간 모델 — 이만큼 뒤 취소(churn)해 재고를 재순환.
 
@@ -51,6 +52,8 @@ export const options = {
     // list 응답(대용량)은 status 만 보고 본문 미사용 → 버려서 8000 VU 메모리 절약.
     // token/예약ID 가 필요한 entry·reserve 요청만 helpers 에서 responseType:'text' 로 본문 유지.
     discardResponseBodies: true,
+    // teardown 이 reconcile/sweep 수렴(90s)을 기다린 뒤 audit 하므로 기본 60s 를 넘긴다.
+    teardownTimeout: '150s',
     scenarios: {
         L5: {
             executor: 'ramping-arrival-rate',
@@ -78,6 +81,8 @@ export const options = {
         // 태그 스코프로 걸어야 summary 에 경로별 p99 가 분리 노출돼 어느 경로가 먼저 무너지는지 보인다.
         'http_req_duration{type:reserve}': ['p(99)<1000'],
         'http_req_duration{type:list}': ['p(95)<200'],
+        // 붕괴 구간을 거쳐도 좌석 정합성은 불변식 — reconcile/sweep 수렴 대기 후 audit(teardown)으로 판정.
+        consistency_violation: ['count==0'],
     },
 };
 
@@ -110,6 +115,17 @@ export default function () {
     }
     // 비-201(드묾: AUTO 라 409 거의 없고 410 은 churn+분산으로 차단)은 leave 엔드포인트가 없어
     // 슬롯이 토큰 TTL 만료까지 남는다. 빈도가 낮아 무시. 빈번해지면 그 자체가 붕괴 신호다.
+}
+
+// 부하 종료 후 정합성 audit. 붕괴 구간에서 reconcile(60s)/sweep(30s)이 밀렸을 수 있어, 수렴 시간을
+// 준 뒤 audit 해 일시 드리프트를 영구 위반과 구분한다. availDrift missing 은 grace(5m) 로도 보호된다.
+export function teardown() {
+    sleep(90); // reconcile 1주기(60s) + sweep(30s) 수렴 여유
+    const violations = checkConsistency();
+    if (violations !== 0) {
+        consistencyViolation.add(violations === -1 ? 1 : violations);
+        console.error(`[L5] CONSISTENCY VIOLATION: ${violations} (audit /internal/consistency)`);
+    }
 }
 
 export function handleSummary(data) {

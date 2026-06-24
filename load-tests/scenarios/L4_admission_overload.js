@@ -20,7 +20,7 @@ import http from 'k6/http';
 import { Counter, Rate } from 'k6/metrics';
 import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
 import { SCHEDULE_ID } from '../common/config.js';
-import { userIds, getEntryToken, bookAuto, cancelReservation } from '../common/helpers.js';
+import { userIds, getEntryToken, bookAuto, cancelReservation, checkConsistency } from '../common/helpers.js';
 
 // 정상 비즈니스 코드를 http_req_failed 에서 제외 → http_req_failed 가 "진짜 5xx/연결실패"만 의미하게 보정.
 // 201 예매성공·204 취소성공·429 입장거부·409 경쟁패배·410 매진.
@@ -29,6 +29,7 @@ http.setResponseCallback(http.expectedStatuses(200, 201, 204, 409, 410, 429));
 const admissionRejected = new Counter('admission_rejected');   // 429 절대 건수 (관측용)
 const admissionRejectRate = new Rate('admission_reject_rate'); // 입장 시도 중 거절 비율 (핵심 단언)
 const serverErrors = new Counter('server_errors');             // 예매 경로 5xx (비정상)
+const consistencyViolation = new Counter('consistency_violation'); // 부하 후 정합성 위반 합계 (U-2)
 
 const RATE = parseInt(__ENV.RATE || '500');
 
@@ -60,6 +61,8 @@ export const options = {
         'http_req_duration{type:reserve}': ['p(95)<500'],
         // 초과 부하 도착률을 실제로 달성했는가 (전제 단언). VU 부족으로 못 채우면 불합격.
         'dropped_iterations': ['count==0'],
+        // 부하 후 Redis-DB 정합성(U-2). churn(취소→좌석/슬롯 반환)이 드리프트를 만들지 않았는지 자동 판정.
+        consistency_violation: ['count==0'],
     },
 };
 
@@ -87,6 +90,16 @@ export default function () {
         const reservationId = res.json('reservationId');
         sleep(1 + Math.random()); // 1~2s 점유 (슬롯 보유시간 = 인간 단위라야 초과가 유지됨)
         cancelReservation(token, reservationId); // 취소로 좌석 회수 → 재고 소진 없이 지속 churn
+    }
+}
+
+// 부하 종료 후 1회 정합성 audit → 위반 합계를 Counter 로 승격(threshold count==0 판정). 읽기전용이라
+// 측정 오염 없음. preempt-grace(5m) 이내 선점은 in-flight 로 제외되므로 직후 호출에 위양성 없음.
+export function teardown() {
+    const violations = checkConsistency();
+    if (violations !== 0) {
+        consistencyViolation.add(violations === -1 ? 1 : violations);
+        console.error(`[L4] CONSISTENCY VIOLATION: ${violations} (audit /internal/consistency)`);
     }
 }
 
