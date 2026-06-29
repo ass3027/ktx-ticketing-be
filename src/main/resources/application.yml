@@ -47,6 +47,9 @@ booking:
     # sweep 실행 주기(직전 완료~다음 시작 간격). HELD TTL(5분)보다 짧게 둬 만료 좌석을 신속 회수.
     # 30s 유휴가 처리율을 지배하던 병목 — 2s 로 단축(유입 없을 땐 빈 sweep 이라 폴링 부하 미미).
     sweep-interval: 2s
+    # 커밋 후 Redis 부수효과(SADD/DECR) 발사 방식. true(기본)=scheduleId별 배치(RTT를 schedule 수로 bound),
+    # false=건별 직렬(2N RTT, T4-13 Before 비교 기준). 정합성은 양쪽 동일.
+    batch-side-effects: true
   reconcile:
     # Redis 가용 풀 ↔ DB(SoT) 드리프트 보정 주기. 드리프트는 드물어 만료(30s)보다 덜 잦게.
     interval: 60s
