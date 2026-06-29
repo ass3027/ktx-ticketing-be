@@ -211,6 +211,86 @@ class BookingIntegrationTest extends AbstractIntegrationTest {
         assertThat(activeCount()).isZero();
     }
 
+    // --- T4-13: confirm vs sweep 경합 (오버셀 0 — 벌크화 함정 회귀 가드) ---
+
+    @Test
+    @DisplayName("T4-13 confirm 선행: 이미 확정(SOLD)된 좌석은 만료 시각이 지나도 sweep 이 가용 풀에 반환하지 않는다(오버셀 0)")
+    void confirm된_좌석은_sweep이_가용풀에_반환하지_않는다() {
+        long targetSeat = seatIds.get(0);
+        EntrySession session = enter();
+        long reservationId = ((BookingResult.Success) bookingService.bookSeat(session.userId(), scheduleId, targetSeat))
+                .reservation().getId();
+
+        // 사용자가 만료 전에 확정 → 좌석 SOLD, 예약 CONFIRMED, 가용 풀에서 빠진 상태 유지.
+        lifecycleService.confirm(reservationId, session.userId());
+        assertThat(seatStatus(targetSeat)).isEqualTo(SeatStatus.SOLD);
+
+        // 이후 만료 시각을 넘겨 sweep — expiresAt < now 라 findExpiredHeldIds 가 이 행을 조회할 수 있으나,
+        // expire() 의 상태 재확인(status != HELD → null)이 CONFIRMED 행을 no-op 처리한다.
+        // 벌크 UPDATE + SELECT 결과로 부수효과를 돌렸다면 SOLD 좌석이 avail 로 새어 오버셀이 났을 지점.
+        mutableClock.advance(Reservation.HELD_TTL.plusSeconds(60));
+        heldExpiryService.sweep();
+
+        assertThat(seatStatus(targetSeat)).as("SOLD 좌석은 그대로").isEqualTo(SeatStatus.SOLD);
+        assertThat(reservationStatus(reservationId)).as("확정은 만료로 뒤집히지 않는다").isEqualTo(ReservationStatus.CONFIRMED);
+        assertThat(preemption.availableSeatIds(scheduleId))
+                .as("SOLD 좌석은 가용 풀에 반환되지 않는다(오버셀 0)")
+                .doesNotContain(targetSeat);
+    }
+
+    @Test
+    @DisplayName("T4-13 동시 경합: 같은 HELD 예약에 confirm 과 sweep 을 동시 실행 → @Version 으로 하나만 성공, 좌석 상태 일관(오버셀 0)")
+    void confirm과_sweep_동시경합시_하나만_성공() throws Exception {
+        long targetSeat = seatIds.get(0);
+        EntrySession session = enter();
+        long reservationId = ((BookingResult.Success) bookingService.bookSeat(session.userId(), scheduleId, targetSeat))
+                .reservation().getId();
+
+        // sweep 의 만료 판정 시각이 지나도록 앞당긴다(두 경로가 같은 HELD 행을 동시에 노림).
+        mutableClock.advance(Reservation.HELD_TTL.plusSeconds(60));
+
+        // confirm 과 sweep 을 같은 출발선에서 동시 발사 — @Version 충돌 시 한쪽은 OptimisticLock 으로 실패한다.
+        var start = new java.util.concurrent.CountDownLatch(1);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            java.util.concurrent.Future<Boolean> confirmTask = pool.submit(() -> {
+                start.await();
+                try {
+                    return lifecycleService.confirm(reservationId, session.userId())
+                            instanceof ReservationCommandResult.Success;
+                } catch (Exception e) {
+                    return false; // 경합 패배(OptimisticLock 등) → 확정 실패
+                }
+            });
+            java.util.concurrent.Future<Boolean> sweepTask = pool.submit(() -> {
+                start.await();
+                try {
+                    return heldExpiryService.sweep() >= 1; // 이 행을 만료시켰는지
+                } catch (Exception e) {
+                    return false;
+                }
+            });
+            start.countDown();
+            confirmTask.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            sweepTask.get(10, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
+        }
+
+        // 최종 상태는 CONFIRMED(좌석 SOLD) 또는 EXPIRED(좌석 AVAILABLE) 중 정확히 하나로 일관해야 한다.
+        // 어느 쪽이든 "좌석 SOLD인데 avail 에도 있는" 오버셀은 없어야 한다.
+        ReservationStatus finalStatus = reservationStatus(reservationId);
+        boolean seatInAvail = preemption.availableSeatIds(scheduleId).contains(targetSeat);
+        if (finalStatus == ReservationStatus.CONFIRMED) {
+            assertThat(seatStatus(targetSeat)).isEqualTo(SeatStatus.SOLD);
+            assertThat(seatInAvail).as("SOLD 인데 가용 풀에도 있으면 오버셀").isFalse();
+        } else {
+            assertThat(finalStatus).as("승자는 confirm 또는 sweep 둘 중 하나").isEqualTo(ReservationStatus.EXPIRED);
+            assertThat(seatStatus(targetSeat)).isEqualTo(SeatStatus.AVAILABLE);
+            assertThat(seatInAvail).as("만료 좌석은 가용 풀로 정확히 1회 반환").isTrue();
+        }
+    }
+
     // --- B-2: 되돌아온 좌석 재예매 (활성 한정 부분 유니크) ---
 
     @Test
