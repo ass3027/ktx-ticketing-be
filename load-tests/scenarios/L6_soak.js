@@ -28,7 +28,7 @@ import exec from 'k6/execution';
 import { Counter } from 'k6/metrics';
 import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
 import { SCHEDULE_COUNT, DEP, ARR, FROM_DATE } from '../common/config.js';
-import { userIds, getEntryToken, bookAuto, confirmReservation, listSchedules, checkConsistency } from '../common/helpers.js';
+import { userIds, getEntryToken, bookAuto, confirmReservation, listSchedules, consistencyDetail } from '../common/helpers.js';
 
 // 409 경쟁패배·410 매진·429/503 입장제어 = 설계상 의도된 응답 → 서버오류 아님.
 // 이래야 http_req_failed: rate<0.01 이 "진짜 5xx<1%" SLO 자동 단언이 된다.
@@ -39,6 +39,9 @@ http.setResponseCallback(http.expectedStatuses({ min: 200, max: 299 }, 409, 410,
 const entryShed = new Counter('entry_shed');
 const soldOut = new Counter('sold_out');
 const consistencyViolation = new Counter('consistency_violation'); // 부하 후 정합성 위반 합계 (U-2)
+// T4-13 sweep 처리율 신호: 부하 종료·TTL 수렴 대기 후에도 남은 expiredHeld 적체. sweep 이 만료 유입을
+// 못 따라가면 양수로 남는다(Before/After 비교 지표). availDrift 와 분리해 "왜 위반인지"를 드러낸다.
+const expiredHeldBacklog = new Counter('expired_held_backlog');
 
 export const options = {
     // teardown 이 HELD TTL(5분) 수렴을 기다린 뒤 audit 하므로 기본 60s 를 넘긴다. 대기(330s)+audit 왕복 여유.
@@ -98,10 +101,18 @@ export default function () {
 // 피한다 — 명세의 "HELD TTL 경과 후 post_run_check.sql ⑤④ 검증"을 teardown 으로 자동화한 것.
 export function teardown() {
     sleep(330); // HELD TTL 5분 + sweep(30s) 여유
-    const violations = checkConsistency();
+    const d = consistencyDetail();
+    const violations = (d.availDrift === -1) ? -1 : d.availDrift + d.expiredHeld + d.statusViolation;
     if (violations !== 0) {
         consistencyViolation.add(violations === -1 ? 1 : violations);
-        console.error(`[L6] CONSISTENCY VIOLATION: ${violations} (audit /internal/consistency)`);
+        console.error(`[L6] CONSISTENCY VIOLATION: total=${violations} availDrift=${d.availDrift} expiredHeld=${d.expiredHeld} statusViolation=${d.statusViolation} (audit /internal/consistency)`);
+    }
+    // T4-13: sweep 처리율 비교 지표. TTL 수렴 대기 후에도 남은 expiredHeld 가 곧 sweep 적체.
+    if (d.expiredHeld > 0) {
+        expiredHeldBacklog.add(d.expiredHeld);
+        console.warn(`[L6] expiredHeld backlog=${d.expiredHeld} — sweep 이 만료 유입을 못 따라가 적체(T4-13 Before/After 지표).`);
+    } else {
+        console.log(`[L6] expiredHeld backlog=0 — sweep 이 만료를 완전 회수(병목 아님).`);
     }
 }
 
@@ -112,8 +123,11 @@ export function handleSummary(data) {
         console.warn(`[L6] sold_out=${sold} — 일부 스케줄 매진. 분산 부족/재고 소진 → 예매 경로 측정 약화. 재고·confirm 비율 점검.`);
     }
     console.log(`[L6] entry_shed=${shed} (입장 제어 차단), sold_out=${sold}. 트렌드는 시계열, HELD 복구는 post_run_check.sql ⑤④로 판정.`);
+    // RESULT_PREFIX 로 summary 파일명을 분기 — Before/After(T4-13) 등 연속 회차가 서로 덮어쓰지 않게 한다.
+    // 미지정 시 기존 'L6_summary.json' 유지(하위 호환).
+    const prefix = __ENV.RESULT_PREFIX || 'L6';
     return {
         stdout: textSummary(data, { indent: ' ', enableColors: false }),
-        'load-tests/results/L6_summary.json': JSON.stringify(data, null, 2),
+        [`load-tests/results/${prefix}_summary.json`]: JSON.stringify(data, null, 2),
     };
 }

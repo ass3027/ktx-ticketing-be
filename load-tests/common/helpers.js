@@ -109,6 +109,25 @@ export function checkConsistency() {
 }
 
 /**
+ * 정합성 audit 의 항목별 원시 수치(T4-13). 위반 합계({@link checkConsistency})만으로는 Before/After 에서
+ * "왜" 위반인지(sweep 적체=expiredHeld vs 드리프트=availDrift)를 구분 못 하므로, sweep 처리율 판정에 쓸
+ * expiredHeld 적체를 항목별로 노출한다. 비200 은 모든 항목 -1.
+ *
+ * @returns {{availDrift:number, expiredHeld:number, statusViolation:number}}
+ */
+export function consistencyDetail() {
+    const res = http.get(`${BASE_URL}/internal/consistency`, { tags: { type: 'audit' } });
+    if (res.status !== 200) {
+        return { availDrift: -1, expiredHeld: -1, statusViolation: -1 };
+    }
+    return {
+        availDrift: res.json('availDrift'),
+        expiredHeld: res.json('expiredHeld'),
+        statusViolation: res.json('statusViolation'),
+    };
+}
+
+/**
  * 운행 리스트 조회.
  */
 export function listSchedules(dep, arr, from) {

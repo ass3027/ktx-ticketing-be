@@ -9,6 +9,16 @@
 ## 🚨 긴급 처리 (임시 · 기존 페이즈와 별개)
 > 진행 중 발견된 선행 차단 이슈. 정규 task(P4~) 재개 전 아래를 먼저 처리한다. 완료 시 본 섹션 정리.
 
+- [ ] **H-1 (인수인계)** T4-13 sweep Before/After 측정 마무리 — **현재 상태**: 전략 토글(`ExpirySideEffects` 건별/배치, `booking.expiry.batch-side-effects`)·confirm-vs-sweep 정합성 통합 테스트 완료(브랜치 `feature/t4-13-sweep-bench`). **Before 측정 완료**: 건별(batch100/interval30s) L6 1회 → `expired_held_backlog=21,377`·`sold_out=77,538`·`consistency_violation=21,377`(전부 expiredHeld 발, availDrift/statusViolation=0 → 오버셀 아님)·reserve p95 35.7ms → **sweep 이 만료 유입을 못 따라가는 병목 실측 확정**(B-1 tz skew 와 무관, T4-13 최적화 정당성 입증). Before 산출물은 **`load-tests/results/L6_before_results.zip`**(summary/run_log/dashboard 3종)로 보존. ⚠️ `load-tests/results/` 는 `.gitignore` 대상이라 zip 이 git 으로 전달되지 않는다 — **다른 머신에서 이어받으면 zip 을 직접 복사**해 와야 한다(같은 머신 다른 세션이면 그대로 접근 가능).
+  - **다음 작업 ①** — After(배치, 현행 운영값) L6 측정 실행:
+    ```powershell
+    pwsh load-tests/scripts/Run-Scenario-Container.ps1 -Scenario load-tests/scenarios/L6_soak.js `
+      -ResultPrefix L6_after -Iterations 1 `
+      -ExpiryBatchSideEffects true -ExpiryBatchSize 1000 -ExpirySweepInterval 2s -Build -Dashboard
+    ```
+    (`RESULT_PREFIX`→`L6_after_summary.json` 자동 분리. Before 산출물 안 덮어씀.)
+  - **다음 작업 ②** — `L6_before_results.zip` 압축 해제로 Before 수치 복원 → After(`L6_after_summary.json`)와 비교: `expired_held_backlog`(21,377 → ?·0 또는 소폭 기대), `sold_out`, reserve p95 시계열(dashboard 시작 vs 종료 윈도우), k6Exit(Before≠0 예상 → After 0 기대).
+  - **다음 작업 ③** — 비교 수치를 `docs/results/P4_Result.md` 의 `## T4-13` 신규 섹션에 Before/After 표로 기록 → 체크리스트 T4-13 `[ ]→[x]`(수용 기준 3종: O(1) RTT·오버셀 0·Before/After 수치 충족 시).
 - [x] **U-2** k6 단독 SLO/정합성 판정 — ps1 사후 SQL 확인을 k6 teardown 게이트로 **병합** 완료(2026-06-24). 읽기전용 `/internal/consistency`(`ConsistencyAuditService`/`ConsistencyController`, `@Profile("!prod")`) 추가 — `ReconciliationService` 의 보정 없는 diff 재사용(mutation 없음)으로 availDrift, `countExpiredHeld`/`countSeatsWithMultipleActive` 로 expiredHeld·statusViolation 집계. L1·L4·L5·L6 `teardown()` 에서 호출 → `Counter('consistency_violation')`+`threshold count==0` 승격. 통합 테스트 5종(델타 격리). **실측 검증**: L1 smoke green(violation=0), **L6 1회에서 게이트가 기존 B-1(tz skew) 검출**(expiredHeld≈3,700·availDrift/statusViolation=0 → 오버셀 아님, `docs/results/P4_Result.md` T4-8). 부수: 러너 `-Build`(코드 변경 반영)·L5/L6 `teardownTimeout`(긴 audit 대기 timeout 함정) 수정. 선행 U-1=B-2(완료).
 
 ---

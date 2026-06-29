@@ -21,6 +21,11 @@ services:
       # base 기본값으로 둬 모든 compose 조합(-f ... -f k6.yml 포함)이 동일 app 정의를
       # 갖게 한다 → `docker compose run` 이 app 을 재생성하는 트리거(조합 불일치)를 없앤다.
       BOOKING_ADMISSION_MAX_ACTIVE: ${BOOKING_ADMISSION_MAX_ACTIVE:-100}
+      # 만료 sweep 설정 — T4-13 Before/After 측정용 env 우회(admission 과 동일 패턴, 기본=운영값=After).
+      # Before 재현 시: BATCH_SIDE_EFFECTS=false BATCH_SIZE=100 SWEEP_INTERVAL=30s (yml 수정·재빌드 없이 토글).
+      BOOKING_EXPIRY_BATCH_SIDE_EFFECTS: ${BOOKING_EXPIRY_BATCH_SIDE_EFFECTS:-true}
+      BOOKING_EXPIRY_BATCH_SIZE: ${BOOKING_EXPIRY_BATCH_SIZE:-1000}
+      BOOKING_EXPIRY_SWEEP_INTERVAL: ${BOOKING_EXPIRY_SWEEP_INTERVAL:-2s}
     # AOT 캐시 영속화 — 컨테이너 재생성(force-recreate)에도 보존해 재 dump(~10s) 회피.
     # entrypoint 가 jar 변경 시 자동 무효화하므로 코드 변경 시엔 재 dump 된다.
     volumes:

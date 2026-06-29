@@ -26,6 +26,13 @@
 .PARAMETER AdmissionMax
     app 의 BOOKING_ADMISSION_MAX_ACTIVE(K). 기본 2000=입장 제어 우회(L1/L2).
     L4 처럼 입장 제어를 발동시켜야 하면 100(운영값) 을 준다.
+.PARAMETER ExpiryBatchSideEffects
+    만료 sweep 부수효과 발사 방식(T4-13). 'true'(기본·After)=scheduleId별 배치 SADD/DECRBY,
+    'false'(Before)=건별 직렬 2N RTT. L6 sweep 병목 Before/After 측정 시 토글.
+.PARAMETER ExpiryBatchSize
+    sweep 1회 최대 처리 건수(T4-13). 기본 1000(After). Before 재현 시 100.
+.PARAMETER ExpirySweepInterval
+    sweep 실행 주기(T4-13). 기본 2s(After). Before 재현 시 30s.
 .PARAMETER Build
     첫 회차에서 app 이미지를 --build 로 재빌드해 코드 변경을 반영한다(Dockerfile=소스 빌드).
     코드를 바꾼 뒤 측정할 때 필수 — 없으면 옛 이미지로 돌아 변경이 반영되지 않는다(측정 무효).
@@ -46,6 +53,9 @@ param(
     [int]$SeatInventoryId = 1,
     [int]$HealthWaitSeconds = 120,
     [int]$AdmissionMax = 2000,
+    [ValidateSet('true','false')][string]$ExpiryBatchSideEffects = 'true',
+    [int]$ExpiryBatchSize = 1000,
+    [string]$ExpirySweepInterval = '2s',
     [switch]$PostRunCheck,
     [switch]$Build,
     [switch]$Dashboard
@@ -82,7 +92,14 @@ function Restart-App {
         if ((docker inspect ktx-ticketing-be-app-1 --format '{{.State.Health.Status}}' 2>$null) -eq 'healthy') {
             $adm = (docker compose exec -T app sh -c 'echo $BOOKING_ADMISSION_MAX_ACTIVE' 2>$null).Trim()
             if ($adm -ne "$AdmissionMax") { throw "admission 보장 실패: BOOKING_ADMISSION_MAX_ACTIVE=$adm (기대 $AdmissionMax)" }
-            Write-Host "app healthy, admission=$adm" -ForegroundColor Green
+            # sweep 설정도 컨테이너에 실제 주입됐는지 확인(T4-13 Before/After 가 옛 설정으로 도는 측정 무효 방지).
+            $se = (docker compose exec -T app sh -c 'echo $BOOKING_EXPIRY_BATCH_SIDE_EFFECTS' 2>$null).Trim()
+            $bs = (docker compose exec -T app sh -c 'echo $BOOKING_EXPIRY_BATCH_SIZE' 2>$null).Trim()
+            $si = (docker compose exec -T app sh -c 'echo $BOOKING_EXPIRY_SWEEP_INTERVAL' 2>$null).Trim()
+            if ($se -ne $env:BOOKING_EXPIRY_BATCH_SIDE_EFFECTS) { throw "sweep 보장 실패: BATCH_SIDE_EFFECTS=$se (기대 $env:BOOKING_EXPIRY_BATCH_SIDE_EFFECTS)" }
+            if ($bs -ne $env:BOOKING_EXPIRY_BATCH_SIZE) { throw "sweep 보장 실패: BATCH_SIZE=$bs (기대 $env:BOOKING_EXPIRY_BATCH_SIZE)" }
+            if ($si -ne $env:BOOKING_EXPIRY_SWEEP_INTERVAL) { throw "sweep 보장 실패: SWEEP_INTERVAL=$si (기대 $env:BOOKING_EXPIRY_SWEEP_INTERVAL)" }
+            Write-Host "app healthy, admission=$adm, sweep(sideEffects=$se size=$bs interval=$si)" -ForegroundColor Green
             return
         }
         Start-Sleep -Seconds 2
@@ -95,11 +112,12 @@ function Invoke-K6Run {
     # Tee-Object 로 파일 저장과 동시에 Out-Host 로 콘솔에 표시(k6 기본 출력). Out-Null 금지.
     # 함수 안에서는 Tee 의 파이프 출력이 반환값으로 새므로 Out-Host 로 흡수 → return 만 출력.
     param([string[]]$Compose, [string]$ContainerScenario, [int]$ScheduleId, [int]$SeatInventoryId,
-          [string]$RunLog, [string[]]$DashboardEnv = @())
+          [string]$RunLog, [string]$ResultPrefix, [string[]]$DashboardEnv = @())
 
     Write-Host "k6(컨테이너) 실행 → $RunLog" -ForegroundColor Cyan
+    # RESULT_PREFIX 를 시나리오에 넘겨 handleSummary 의 summary 파일명을 분기(연속 회차 덮어쓰기 방지).
     docker compose @Compose run --rm `
-        -e SCHEDULE_ID=$ScheduleId -e SEAT_INVENTORY_ID=$SeatInventoryId `
+        -e SCHEDULE_ID=$ScheduleId -e SEAT_INVENTORY_ID=$SeatInventoryId -e RESULT_PREFIX=$ResultPrefix `
         @DashboardEnv `
         k6 run $ContainerScenario 2>&1 |
         Tee-Object -FilePath $RunLog | Out-Host
@@ -133,6 +151,11 @@ if (-not $ResultPrefix) {
 # L4(입장 제어 검증)처럼 K 를 발동시켜야 하면 -AdmissionMax 100 으로 정상값을 준다.
 $compose = @('-f', 'docker-compose.yml', '-f', 'docker-compose.k6.yml')
 $env:BOOKING_ADMISSION_MAX_ACTIVE = "$AdmissionMax"
+# 만료 sweep 설정 주입(T4-13). compose 의 ${VAR:-default} 가 받음 → app 재기동 시 반영.
+$env:BOOKING_EXPIRY_BATCH_SIDE_EFFECTS = $ExpiryBatchSideEffects
+$env:BOOKING_EXPIRY_BATCH_SIZE = "$ExpiryBatchSize"
+$env:BOOKING_EXPIRY_SWEEP_INTERVAL = $ExpirySweepInterval
+Write-Host "sweep 설정: batchSideEffects=$ExpiryBatchSideEffects batchSize=$ExpiryBatchSize interval=$ExpirySweepInterval" -ForegroundColor DarkCyan
 
 # k6 컨테이너 안의 시나리오 경로 (load-tests 가 /work/load-tests 로 마운트됨).
 $containerScenario = "/work/" + ($Scenario -replace '\\','/')
@@ -158,7 +181,8 @@ try {
               '-e',"K6_WEB_DASHBOARD_EXPORT=/work/load-tests/results/${ResultPrefix}_dashboard.html")
         } else { @() }
         $k6Exit = Invoke-K6Run -Compose $compose -ContainerScenario $containerScenario `
-            -ScheduleId $ScheduleId -SeatInventoryId $SeatInventoryId -RunLog $runLog -DashboardEnv $dashEnv
+            -ScheduleId $ScheduleId -SeatInventoryId $SeatInventoryId -RunLog $runLog `
+            -ResultPrefix $ResultPrefix -DashboardEnv $dashEnv
 
         if ($PostRunCheck) {
             $checkLog = Join-Path $resultsDir "${ResultPrefix}_container_run_$i.check.txt"
