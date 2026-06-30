@@ -13,11 +13,11 @@
 | P1 설계 확정 | 6 | 6 | 100% | M1 ✅ |
 | P2 핵심 PoC | 5 | 5 | 100% | M2 ✅ |
 | P3 기능 구현 | 13 | 13 | 100% | M3 ✅ |
-| P4 성능 측정 | 12 | 4 | 33% | M4 |
+| P4 성능 측정 | 12 | 5 | 42% | M4 |
 | P5 비동기 | 3 | 0 | 0% | — |
 | P6 산출물 | 7 | 0 | 0% | M5 |
 | P7 심화 산출물 (110%) | 3 | 0 | 0% | — |
-| **합계** | **53** | **32** | **60%** | |
+| **합계** | **53** | **33** | **62%** | |
 
 ---
 
@@ -71,7 +71,7 @@
 - [ ] **T4-5** L3 조회 폭주
 - [x] **T4-6** L4 입장 초과 → 컨테이너 k6 본 측정 3회(K=100·RATE=500·3분+램프) 일관 그린. server_errors=0(B-2 수정 전 100)·admission_reject_rate 85.7~85.8%(초과분 429 흡수, S5 정상)·http_req_failed{entry}=0%·dropped=0·reserve p95 69~97ms(<500)·k6Exit 0. B-2 재예매 수정을 smoke→본 측정으로 확정. 결과: `results/P4_Result.md`.
 - [ ] **T4-7** L5 임계점 탐색 → **활성자 상한 K 역산·확정**
-- [ ] **T4-8** L6 지속 부하(soak)
+- [x] **T4-8** L6 지속 부하(soak) — 부하 SLO 그린 + 정합성 게이트 green(L6_after K=2000: violation 0·k6Exit 0) + 시계열 우상향 없음(steady p95 −8.4ms/min, 하향 안정). 잔여 2건(B-1 해소 후 게이트·시계열 판정)을 T4-13 측정으로 해소 (`docs/results/P4_Result.md` T4-8 완료 확인)
 - [ ] **T4-9** 실험 E1(선점/락)·E2(입장 제어)·E3(조회 캐시) Before/After + 그래프
 - [ ] **T4-10** 실험 E5: 가상 스레드(Virtual Thread) on/off 성능 비교 — `spring.threads.virtual.enabled` 토글, 동일 부하(L2)에서 처리량·p95/p99·스레드 점유 Before/After + 그래프. 락 대기(Redisson)·DB I/O 블로킹 구간이 캐리어 스레드를 점유하지 않음을 검증. (JDK 21+ / Spring Boot 4.0, JDK 24 JEP 491로 synchronized 핀닝 해소)
 - [ ] **T4-11** 실험 E6: 분산 락 라이브러리 비교 — **Redisson** vs 대안(① Spring Integration `RedisLockRegistry`, ② 직접 구현 Lettuce `SET NX PX` + Lua 해제, ③ (선택) ZooKeeper Curator `InterProcessMutex`). 동일 부하(L1 단일좌석 경쟁)에서 **초과 판매 0건 정합성 유지를 전제**로 처리량·p95/p99·락 획득 지연·CPU/네트워크 RTT를 Before/After + 그래프로 비교. Redisson 부가기능(watchdog 자동 갱신, pub/sub 기반 대기 vs 스핀 폴링, 재진입, fair lock)이 성능·구현 복잡도·운영 안정성에 미치는 영향을 분석하고, 락 라이브러리 선택 트레이드오프 근거를 README에 기록. (T2-4 Redisson PoC 재사용, `test/e6-lock-lib-comparison` 브랜치)

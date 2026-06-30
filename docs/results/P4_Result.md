@@ -18,7 +18,7 @@
 | T4-5 L3 조회 폭주 | ⏳ | |
 | T4-6 L4 입장 초과 | ✅ | **본 측정 3회 일관 그린**(2026-06-24, K=100·RATE=500): server_errors 0(수정 전 100)·reject 85.7~85.8%·reserve p95 69~97ms·dropped 0·k6Exit 0. B-2 수정 확정 |
 | T4-7 L5 임계점 탐색(K 확정) | ⏳ | `booking.admission.max-active` 잠정값 100 → L5 결과로 확정 |
-| T4-8 L6 지속 부하(soak) | 🟡 | **부하 1회 그린**(300VU·33m·K=100): 5xx 0%·checks 100%·reserve p95 57ms·list p95 9.8ms·sold_out 0. 단 **U-2 정합성 게이트가 B-1(tz skew) 검출** → expiredHeld≈3,700(availDrift·statusViolation=0, 오버셀 없음). 시계열 추세 판정 + B-1 수정 후 재측정 잔여 |
+| T4-8 L6 지속 부하(soak) | ✅ | **완료**(2026-06-30): 부하 SLO 그린 + 정합성 게이트 green(L6_after K=2000: violation 0·k6Exit 0) + 시계열 우상향 없음(steady p95 기울기 −8.4ms/min, 하향 안정). 잔여 2건(B-1 해소 후 게이트·시계열 판정)을 T4-13 측정으로 해소 |
 | T4-9 E1·E2·E3 Before/After | ⏳ | E1-before 토글(`booking.preemption.enabled=false`) 구현 필요 |
 | T4-10 E5 가상 스레드 | ⏳ | |
 | T4-11 E6 분산 락 라이브러리 비교 | ⏳ | `DistributedLock` 추상화는 완료 |
@@ -385,11 +385,12 @@ L4 는 슬롯 churn(입장→예매→1~2s 점유→**취소**→슬롯/좌석 �
 
 ---
 
-## T4-8 — L6 지속 부하 (soak) · 1회 (🟡 부하 그린 / 정합성 게이트가 B-1 검출)
+## T4-8 — L6 지속 부하 (soak) (✅ 완료, 2026-06-30)
 
-> 상태: 부하 1회(300VU·33분·K=100, 2026-06-24). **U-2 정합성 자동 게이트**(`/internal/consistency`
-> teardown audit)를 처음 실측 적용한 회차. 부하 SLO 는 전부 그린이나, **게이트가 기존 B-1(timezone
-> skew) 결함을 검출**해 `consistency_violation` red(k6Exit 99). 시계열 추세 판정 + B-1 수정 후 재측정 잔여.
+> 상태: ✅ 완료. 1차(300VU·33분·K=100, 2026-06-24)에서 **U-2 정합성 자동 게이트**(`/internal/consistency`
+> teardown audit)를 처음 실측 적용 — 부하 SLO 전부 그린이나 게이트가 기존 B-1(timezone skew) 검출(k6Exit 99).
+> 잔여였던 ① B-1 해소 후 게이트 green 최종 확인, ② 응답시간 시계열 우상향 판정 모두 **T4-13 측정(L6_after,
+> K=2000, 2026-06-30)으로 해소** — 아래 [완료 확인] 참조.
 
 ### 부하 지표 (전부 그린)
 | 지표 | 값 | 합격선 | 판정 |
@@ -420,8 +421,27 @@ L4 는 슬롯 churn(입장→예매→1~2s 점유→**취소**→슬롯/좌석 �
   entrypoint `-Duser.timezone=Asia/Seoul`, JDBC `serverTimezone=Asia/Seoul` 유지)해 skew 제거.
   검증: 예매 1건의 `expires_at`·DB `NOW()` 모두 KST → `is_expired=0`·audit `expiredHeld=0`
   (이전 9h skew 재현 없음). 이 red 의 원인은 제거됨 — L6 재측정 시 게이트 green 기대.
-- **잔여**: ① B-1 해소 반영한 L6 재측정으로 게이트 green 최종 확인 ② 응답시간 우상향 판정은 시계열
-  출력(`--out json`)이 별도 필요 — 이번 컨테이너 러너 실행 범위 밖.
+### [완료 확인] 잔여 2건 해소 (T4-13 측정 L6_after, K=2000, 2026-06-30)
+- **① B-1 해소 후 게이트 green 최종 확인 ✅**: L6_after 에서 `consistency_violation=0`(threshold ✓)·
+  k6Exit=0. 게다가 1차(K=100, 입장 제어가 부하를 깎음)보다 **더 가혹한 K=2000(입장 제어 우회)** 조건에서
+  green 이라 더 강하게 충족. (B-1 자체는 [[B-1]] 에서 환경 tz KST 통일로 해소됨)
+- **② 응답시간 시계열 우상향 판정 ✅ — 우상향 없음(오히려 하향 안정화)**: `L6_after_dashboard.html`
+  임베드 시계열(10s 스냅샷 ×231)을 디코딩해 `http_req_duration` p95 추세 분석:
+
+  | 구간 | p95 (ms) | iteration_duration p95 (ms) |
+  |------|------|------|
+  | 0–5m | 68.4 | 2,098 |
+  | 5–10m | **426.1** (워밍업 스파이크) | 2,565 |
+  | 10–15m | 74.6 | 2,101 |
+  | 15–20m | 33.2 | 2,055 |
+  | 20–25m | 34.9 | 2,054 |
+  | 25–30m | 22.0 | 2,031 |
+
+  - steady-state(VUs=300, 0–1907s) p95 **선형 회귀 기울기 = −8.4 ms/min(음수=우하향)**.
+  - 5–10m 의 일시적 스파이크는 JIT/AOT 워밍업·캐시 채워지는 과도구간이며, 이후 평탄·하향 수렴.
+    33분 soak 에서 **메모리 누수/성능 열화로 인한 우상향 추세는 관측되지 않음** → soak 합격.
+  - (주의: 시계열은 base `http_req_duration` 전체값 — list 다수라 reserve 전용보다 낮게 나오나
+    *추세* 판정에는 동일하게 유효. reserve 전용 태그 시계열은 dashboard 스냅샷에 미수집.)
 
 > ⚠️ teardown 함정(이번에 해소): k6 기본 `teardownTimeout=60s`. teardown 이 HELD TTL 수렴을
 > 기다리느라(330s) 60s 에 강제 종료되면 audit 이 아예 호출되지 않아 `consistency_violation=0`(위양성
