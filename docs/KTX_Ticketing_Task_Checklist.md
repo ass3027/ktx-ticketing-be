@@ -6,23 +6,6 @@
 
 ---
 
-## 🚨 긴급 처리 (임시 · 기존 페이즈와 별개)
-> 진행 중 발견된 선행 차단 이슈. 정규 task(P4~) 재개 전 아래를 먼저 처리한다. 완료 시 본 섹션 정리.
-
-- [ ] **H-1 (인수인계)** T4-13 sweep Before/After 측정 마무리 — **현재 상태**: 전략 토글(`ExpirySideEffects` 건별/배치, `booking.expiry.batch-side-effects`)·confirm-vs-sweep 정합성 통합 테스트 완료(브랜치 `feature/t4-13-sweep-bench`). **Before 측정 완료**: 건별(batch100/interval30s) L6 1회 → `expired_held_backlog=21,377`·`sold_out=77,538`·`consistency_violation=21,377`(전부 expiredHeld 발, availDrift/statusViolation=0 → 오버셀 아님)·reserve p95 35.7ms → **sweep 이 만료 유입을 못 따라가는 병목 실측 확정**(B-1 tz skew 와 무관, T4-13 최적화 정당성 입증). Before 산출물은 **`load-tests/results/L6_before_results.zip`**(summary/run_log/dashboard 3종)로 보존. ⚠️ `load-tests/results/` 는 `.gitignore` 대상이라 zip 이 git 으로 전달되지 않는다 — **다른 머신에서 이어받으면 zip 을 직접 복사**해 와야 한다(같은 머신 다른 세션이면 그대로 접근 가능).
-  - **다음 작업 ①** — After(배치, 현행 운영값) L6 측정 실행:
-    ```powershell
-    pwsh load-tests/scripts/Run-Scenario-Container.ps1 -Scenario load-tests/scenarios/L6_soak.js `
-      -ResultPrefix L6_after -Iterations 1 `
-      -ExpiryBatchSideEffects true -ExpiryBatchSize 1000 -ExpirySweepInterval 2s -Build -Dashboard
-    ```
-    (`RESULT_PREFIX`→`L6_after_summary.json` 자동 분리. Before 산출물 안 덮어씀.)
-  - **다음 작업 ②** — `L6_before_results.zip` 압축 해제로 Before 수치 복원 → After(`L6_after_summary.json`)와 비교: `expired_held_backlog`(21,377 → ?·0 또는 소폭 기대), `sold_out`, reserve p95 시계열(dashboard 시작 vs 종료 윈도우), k6Exit(Before≠0 예상 → After 0 기대).
-  - **다음 작업 ③** — 비교 수치를 `docs/results/P4_Result.md` 의 `## T4-13` 신규 섹션에 Before/After 표로 기록 → 체크리스트 T4-13 `[ ]→[x]`(수용 기준 3종: O(1) RTT·오버셀 0·Before/After 수치 충족 시).
-- [x] **U-2** k6 단독 SLO/정합성 판정 — ps1 사후 SQL 확인을 k6 teardown 게이트로 **병합** 완료(2026-06-24). 읽기전용 `/internal/consistency`(`ConsistencyAuditService`/`ConsistencyController`, `@Profile("!prod")`) 추가 — `ReconciliationService` 의 보정 없는 diff 재사용(mutation 없음)으로 availDrift, `countExpiredHeld`/`countSeatsWithMultipleActive` 로 expiredHeld·statusViolation 집계. L1·L4·L5·L6 `teardown()` 에서 호출 → `Counter('consistency_violation')`+`threshold count==0` 승격. 통합 테스트 5종(델타 격리). **실측 검증**: L1 smoke green(violation=0), **L6 1회에서 게이트가 기존 B-1(tz skew) 검출**(expiredHeld≈3,700·availDrift/statusViolation=0 → 오버셀 아님, `docs/results/P4_Result.md` T4-8). 부수: 러너 `-Build`(코드 변경 반영)·L5/L6 `teardownTimeout`(긴 audit 대기 timeout 함정) 수정. 선행 U-1=B-2(완료).
-
----
-
 ## 진행 현황 요약 (수기 갱신)
 | 페이즈 | 태스크 수 | 완료 | 진행률 | 마일스톤 |
 |--------|-----------|------|--------|----------|
@@ -30,11 +13,11 @@
 | P1 설계 확정 | 6 | 6 | 100% | M1 ✅ |
 | P2 핵심 PoC | 5 | 5 | 100% | M2 ✅ |
 | P3 기능 구현 | 13 | 13 | 100% | M3 ✅ |
-| P4 성능 측정 | 12 | 3 | 25% | M4 |
+| P4 성능 측정 | 12 | 4 | 33% | M4 |
 | P5 비동기 | 3 | 0 | 0% | — |
 | P6 산출물 | 7 | 0 | 0% | M5 |
 | P7 심화 산출물 (110%) | 3 | 0 | 0% | — |
-| **합계** | **53** | **31** | **58%** | |
+| **합계** | **53** | **32** | **60%** | |
 
 ---
 
@@ -97,7 +80,7 @@
 - [ ] **T4-12** 실험 E7: 선점 백엔드(in-memory 스토어) 비교 — **Redis Set** vs **Memcached**. `MemcachedPreemption` 을 `SeatPreemption` 인터페이스 구현체로 추가(spymemcached 등 클라이언트 + docker-compose memcached). Memcached는 Set·원자 SREM/SPOP가 없어 **SEAT 선점은 좌석별 키 `add`(존재 시 실패=원자 점유), AUTO는 Set 부재로 별도 인덱스/CAS 우회 필요** — 이 *부적합성 분석 자체가 기술선택 트레이드오프 근거*(C6). 동일 부하(L1)에서 **초과 판매 0건 전제**로 처리량·p95/p99·라운드트립을 Before/After + 그래프로 비교, README 기록.
   - 구현: `@ConditionalOnProperty(name="booking.preemption", havingValue=…)` 로 구현체 토글, 호출 측(`BookingService`) 무변경. (선점 추상화는 이미 `SeatPreemption`/`RedisSetPreemption` 으로 분리됨)
   - Valkey/KeyDB/Dragonfly 등 **Redis 와이어 호환** 스토어는 구현체 불필요 — `RedisSetPreemption` 그대로 두고 접속 엔드포인트만 교체해 부하·비용 벤치마크(코드 변경 0).
-- [ ] **T4-13** (선행: T4-8) 만료 sweep 벌크 UPDATE 최적화 — 건별 처리(현재 1 SELECT fetch join + 2 UPDATE + 건별 트랜잭션, **O(N) roundtrip**)를 배치 처리(**O(1)**)로 전환하고 Before/After 측정. "측정 후 최적화" 원칙(T3-2 SCARD·E3와 동일).
+- [x] **T4-13** (선행: T4-8) 만료 sweep 벌크 UPDATE 최적화 — 건별 처리(현재 1 SELECT fetch join + 2 UPDATE + 건별 트랜잭션, **O(N) roundtrip**)를 배치 처리(**O(1)**)로 전환하고 Before/After 측정. "측정 후 최적화" 원칙(T3-2 SCARD·E3와 동일).
   - **트리거 조건**: T4-8(L6 soak)에서 sweep 이 병목으로 측정될 때만 착수. 미측정 시 현 건별 설계(T3-9) 유지.
   - **구현 범위**: ① 만료 대상 `(reservationId, seatInventoryId, scheduleId)` 매핑 1 SELECT → ② `UPDATE Reservation SET status=EXPIRED, version=version+1 WHERE status='HELD' AND expiresAt < :now` → ③ `UPDATE SeatInventory SET status=AVAILABLE WHERE ...` (≈ 3 roundtrip / O(1)). 토글로 건별/벌크 전환해 비교.
   - **정합성 함정(반드시 처리)**: Redis 부수효과(`returnSeat` SADD·`leave` DECR)를 **UPDATE 전 SELECT 결과로 돌리면 안 됨** — SELECT~UPDATE 사이 사용자 confirm(HELD→SOLD)된 행은 `WHERE status='HELD'`로 UPDATE에선 빠지지만 SELECT엔 남아 SOLD 좌석을 가용 풀에 반환 = **오버셀**. 실제 EXPIRED 전이된 행만 부수효과 대상이 되도록 보장(전이 후 재조회 또는 잠금). 도메인 상태머신(`Reservation.expire()`) 우회 + `@Version` 수동 증가(사용자 confirm 경로 lost-update 방어)를 직접 재구축해야 함.

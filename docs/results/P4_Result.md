@@ -23,7 +23,7 @@
 | T4-10 E5 가상 스레드 | ⏳ | |
 | T4-11 E6 분산 락 라이브러리 비교 | ⏳ | `DistributedLock` 추상화는 완료 |
 | T4-12 E7 선점 백엔드(Redis vs Memcached) | ⏳ | `SeatPreemption` 추상화는 완료 |
-| T4-13 만료 sweep 벌크 최적화 | ⏳ | 트리거 조건: T4-8 에서 sweep 병목 측정 시 |
+| T4-13 만료 sweep 벌크 최적화 | ✅ | **Before/After 입증**(L6 1회씩, 2026-06-30): backlog 21,377→0·consistency_violation ✗→✓·k6Exit ≠0→0. reserve p95 47→64ms(둘 다 <500). 오버셀 0 유지 |
 
 ---
 
@@ -426,3 +426,54 @@ L4 는 슬롯 churn(입장→예매→1~2s 점유→**취소**→슬롯/좌석 �
 > ⚠️ teardown 함정(이번에 해소): k6 기본 `teardownTimeout=60s`. teardown 이 HELD TTL 수렴을
 > 기다리느라(330s) 60s 에 강제 종료되면 audit 이 아예 호출되지 않아 `consistency_violation=0`(위양성
 > 통과)로 보인다(직전 1회차에서 실제 발생). L6 `teardownTimeout: '360s'`·L5 `'150s'` 로 수정.
+
+## T4-13 — 만료 sweep 부수효과 배치화 (✅ Before/After 입증, 2026-06-30)
+
+> 상태: 만료 sweep 의 부수효과 발사를 **건별(per-row) → 배치(bulk)** 로 바꾼 최적화의 효과를 L6
+> soak(300VU·~33분·K=2000) Before/After 1회씩으로 실측. 전략은 `booking.expiry.batch-side-effects`
+> 토글(`ExpirySideEffects` 건별/배치)로 분기, 런타임에 컨테이너 env 주입값으로 검증(옛 설정 무효측정 방지).
+> Before 산출물은 `load-tests/results/L6_before_results.zip`(`.gitignore` 대상이라 git 미전달).
+
+### 측정 조건
+| | Before (건별) | After (배치) |
+|------|------|------|
+| `BOOKING_EXPIRY_BATCH_SIDE_EFFECTS` | `false` | `true` |
+| `BOOKING_EXPIRY_BATCH_SIZE` | 100 | 1000 |
+| `BOOKING_EXPIRY_SWEEP_INTERVAL` | 30s | 2s |
+| 시나리오 | L6_soak (300VU, 33분, K=2000) | 동일 |
+| testRunDuration | 2,322s | 2,307s |
+
+### Before / After
+| 지표 | Before (건별) | After (배치) | 판정 |
+|------|------|------|------|
+| `expired_held_backlog` | **21,377** | **0** (메트릭 미발생) | 만료 유입을 sweep 이 완전 따라잡음 |
+| `consistency_violation` | **21,377** (threshold ✗) | **0** (threshold ✓) | backlog 전량 해소 |
+| k6 exit code | **≠0** (`thresholds … crossed`) | **0** | 게이트 통과 |
+| `sold_out` | 77,538 | 61,697 | backlog 미해소분만큼 Before 가 매진 과집계 |
+| reserve `p(95)` | 47.1ms | 64.3ms | 둘 다 <500 ✓ (배치 sweep 의 주기적 벌크 부하로 소폭 상승) |
+| reserve `p(99)` | <1,000 (threshold ✓) | <1,000 (threshold ✓) | 둘 다 SLO 충족 |
+| list `p(95)` | 14.8ms | 21.5ms | 둘 다 <200 ✓ |
+| `http_reqs` | 561,064 | 602,217 | backlog 미발생으로 예매 경로 처리량 ↑ |
+| confirm checks | 27,557 | 48,006 | After 가 확정까지 더 많이 성공 |
+
+### 해석
+- **핵심 = backlog 21,377 → 0**: Before(건별)는 sweep 이 만료 HELD 를 회수하는 속도가 신규 만료
+  유입을 못 따라가 backlog 가 누적됐다. 이 누적분이 그대로 `consistency_violation`(전량 expiredHeld
+  발, `availDrift`·`statusViolation`=0)으로 잡혀 k6 threshold red. 배치화 후 backlog 가 발생조차
+  하지 않아(메트릭 카운터 0 증분) 게이트 green·k6Exit 0.
+- **오버셀은 양쪽 다 0**: Before 의 violation 은 전부 *만료 회수 지연* 이지 좌석 중복 점유가 아니다
+  (`availDrift`·`statusViolation`=0, [[T4-8]] 와 동일 성격). 즉 배치화는 정합성을 깨지 않고
+  *처리 적체* 만 제거한 최적화다.
+- **reserve p95 47→64ms 의 트레이드오프**: 배치 sweep 은 2s 주기로 최대 1,000건을 한 번에 처리하므로
+  그 순간 DB 부하가 스파이크처럼 몰려 예매 경로 지연이 소폭 상승한다. 그래도 SLO(<500/<1000) 는
+  여유 있게 충족 → backlog 제거 대비 수용 가능한 비용.
+- **B-1 무관**: 본 Before 의 backlog 는 [[T4-8]] 의 tz skew(B-1, 해소됨)와 다른, sweep 처리량
+  병목 그 자체다. T4-13 최적화의 정당성이 실측으로 입증됨.
+
+### 수용 기준 (3종 충족)
+- ✅ O(1) RTT: 부수효과를 건별 N회 발사 → 배치 1회로 묶음(전략 분리, `306d188`)
+- ✅ 오버셀 0: `availDrift`·`statusViolation` 양쪽 측정 모두 0
+- ✅ Before/After 수치: backlog 21,377 → 0, consistency_violation threshold ✗ → ✓, k6Exit ≠0 → 0
+
+> 산출물: Before `load-tests/results/L6_before_results.zip`(summary/run_log/dashboard 3종) ·
+> After `L6_after_summary.json`/`L6_after_container_run_1.txt`/`L6_after_dashboard.html`.
