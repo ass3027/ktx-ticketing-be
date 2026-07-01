@@ -1,0 +1,118 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "title": "KTX — Redis & HikariCP (Query Path)",
+  "uid": "ktx-redis-hikari",
+  "tags": ["ktx", "redis", "hikari", "query-path"],
+  "time": { "from": "now-15m", "to": "now" },
+  "refresh": "5s",
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "type": "row",
+      "title": "HikariCP (DB connection pool)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Connections — active / idle / max",
+      "description": "active 가 max 에 상시 붙으면 풀 포화. L3 Before 에서 active=10=max 관측.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "hikaricp_connections_active{application=\"ktx-ticketing-be\"}", "legendFormat": "active", "refId": "A" },
+        { "expr": "hikaricp_connections_idle{application=\"ktx-ticketing-be\"}", "legendFormat": "idle", "refId": "B" },
+        { "expr": "hikaricp_connections_max{application=\"ktx-ticketing-be\"}", "legendFormat": "max", "refId": "C" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Pending threads (커넥션 대기 큐)",
+      "description": "커넥션을 못 얻고 대기하는 스레드. L3 Before 에서 190 관측 = 풀 부족 신호.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "hikaricp_connections_pending{application=\"ktx-ticketing-be\"}", "legendFormat": "pending", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Connection acquire latency (p99 / avg)",
+      "description": "커넥션 획득 대기 시간. Before p99≈3.9s. 풀 상향(①)의 직접 효과 지표.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "hikaricp_connections_acquire_seconds_max{application=\"ktx-ticketing-be\"}", "legendFormat": "acquire max", "refId": "A" },
+        { "expr": "rate(hikaricp_connections_acquire_seconds_sum{application=\"ktx-ticketing-be\"}[1m]) / rate(hikaricp_connections_acquire_seconds_count{application=\"ktx-ticketing-be\"}[1m])", "legendFormat": "acquire avg", "refId": "B" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Connection usage time (점유 시간)",
+      "description": "커넥션 1개를 잡고 있는 시간. Before max≈644ms — SCARD 왕복을 tx 안에서 기다림. ②(tx밖)③(pipeline)의 목표 지표.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "hikaricp_connections_usage_seconds_max{application=\"ktx-ticketing-be\"}", "legendFormat": "usage max", "refId": "A" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Redis (Lettuce command latency)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Command rate by type (ops/s)",
+      "description": "명령별 초당 실행 수. SCARD 가 조회 부하의 주 명령. ③(pipeline)로 SCARD 왕복이 줄면 여기서 관측.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (command) (rate(lettuce_command_completion_seconds_count{application=\"ktx-ticketing-be\"}[1m]))", "legendFormat": "{{command}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Command completion latency — avg by type",
+      "description": "명령별 평균 완료 지연(send→complete). ②(tx밖)은 지연 자체보다 커넥션 점유를 줄이고, ③(pipeline)은 왕복 수를 줄인다.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (command) (rate(lettuce_command_completion_seconds_sum{application=\"ktx-ticketing-be\"}[1m])) / sum by (command) (rate(lettuce_command_completion_seconds_count{application=\"ktx-ticketing-be\"}[1m]))", "legendFormat": "{{command}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "SCARD latency (조회 핵심 명령)",
+      "description": "조회 경로 잔여석 집계 명령. Before/After 비교의 초점.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "lettuce_command_completion_seconds_max{application=\"ktx-ticketing-be\",command=\"SCARD\"}", "legendFormat": "SCARD max", "refId": "A" },
+        { "expr": "rate(lettuce_command_completion_seconds_sum{application=\"ktx-ticketing-be\",command=\"SCARD\"}[1m]) / rate(lettuce_command_completion_seconds_count{application=\"ktx-ticketing-be\",command=\"SCARD\"}[1m])", "legendFormat": "SCARD avg", "refId": "B" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "First-response latency — avg by type",
+      "description": "명령 send→첫 응답. 네트워크 왕복(RTT) 성분. pipeline(③) 효과가 여기 나타난다.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (command) (rate(lettuce_command_firstresponse_seconds_sum{application=\"ktx-ticketing-be\"}[1m])) / sum by (command) (rate(lettuce_command_firstresponse_seconds_count{application=\"ktx-ticketing-be\"}[1m]))", "legendFormat": "{{command}}", "refId": "A" }
+      ]
+    }
+  ]
+}
