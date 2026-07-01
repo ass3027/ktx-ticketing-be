@@ -320,7 +320,7 @@ public StringRedisTemplate stringRedisTemplate(LettuceConnectionFactory factory)
 | 2026-07-01 | B 구현 | RedisConfig 에 Lettuce factory+@Primary template. host/port 는 DataRedisConnectionDetails 주입(@Value 는 @ServiceConnection 동적포트 놓쳐 테스트 오염→교정) | ✅ |
 | 2026-07-01 | 게이트 검증 | 131 테스트 그린(ConcurrencyPoc oversell 0 포함). app 재빌드 기동 정상(factory 충돌 없음). lettuce_command_*(SCARD/HGETALL/SMEMBERS…) Prometheus 수집 확인 | ✅ |
 | 2026-07-01 | Grafana | redis-hikari.json 대시보드 추가(Hikari active/pending/acquire/usage + Redis command rate/latency/SCARD/firstresponse). 로드·쿼리 데이터 확인 | ✅ |
-| | ① pool size 토글·측정 | | ⏳ |
+| 2026-07-01 | ① pool size 토글·측정 | DB_POOL_SIZE env 외부화(러너 actuator 검증). pool 10/20/50 sweep(×2회): TPS 849→924→950→966(+14%만, 한계효용 체감)·pending 190→149·usage 0.84→0.21s. **pool 은 지렛대 아님**(~960 TPS 점근, SLO 미달 유지) → 근본=점유시간. 결과: P4_Result.md T4-5 | ✅ |
 | | ② Redis tx 밖 토글·측정 | | ⏳ |
 | | ③ Redis pipeline 토글·측정 | | ⏳ |
 | | ④ 조회 단기 캐시(=E3 after) 토글·측정 | | ⏳ |

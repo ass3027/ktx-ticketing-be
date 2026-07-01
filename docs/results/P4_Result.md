@@ -15,7 +15,7 @@
 | T4-2 서버 모니터링 | ✅ | Actuator + Micrometer + Prometheus + Grafana(JVM 대시보드) + Lettuce Redis 명령 지연 계측 |
 | T4-3 L1 직접선택 단일좌석 경쟁(정합성) | ✅ | **oversell=0·중복=0 3회 일관 달성** (호스트 JVM, refused≈0). 1 win / 999 정상 패배 |
 | T4-4 L2/L2b 정상·자동배정 처리량 | ✅ | L2: 예매 p95≤500ms·TPS 833~863·5xx 0.03% 합격 / **list p95~0.9s SLO(200ms) 미달**(→L3·E3). L2b: AUTO 1000석 정확 매진·oversell 0 |
-| T4-5 L3 조회 폭주 | ⏳ | |
+| T4-5 L3 조회 폭주 | ⏳(측정중) | **Before 규명 완료**: 순수 읽기 3,000TPS 목표에서 **~850TPS 포화**(dropped 46만·list p95 9s). 병목=풀10·pending190·usage644ms. **① pool 10→50 sweep**: TPS 849→966(+14%만, 한계효용 체감)·여전히 SLO 미달 → pool 은 지렛대 아님. ②③④ 진행 |
 | T4-6 L4 입장 초과 | ✅ | **본 측정 3회 일관 그린**(2026-06-24, K=100·RATE=500): server_errors 0(수정 전 100)·reject 85.7~85.8%·reserve p95 69~97ms·dropped 0·k6Exit 0. B-2 수정 확정 |
 | T4-7 L5 임계점 탐색(K 확정) | ⏳ | `booking.admission.max-active` 잠정값 100 → L5 결과로 확정 |
 | T4-8 L6 지속 부하(soak) | ✅ | **완료**(2026-06-30): 부하 SLO 그린 + 정합성 게이트 green(L6_after K=2000: violation 0·k6Exit 0) + 시계열 우상향 없음(steady p95 기울기 −8.4ms/min, 하향 안정). 잔여 2건(B-1 해소 후 게이트·시계열 판정)을 T4-13 측정으로 해소 |
@@ -336,6 +336,51 @@ Redis `SCARD avail:1` **0**.
 정상/자동배정 부하에서 **예매 경로·처리량·정합성은 모두 합격**(예매 p95≤500ms, TPS≥200×4,
 oversell 0, 매진 정확 수렴). 유일한 미달은 **조회(list) 지연**으로, 이는 2-tier 일관성 모델의
 조회 캐시 효과를 검증할 L3·E3 의 Before 신호로 활용한다.
+
+---
+
+## T4-5 — L3 조회 폭주 (⏳ 측정 중 · 조회 경로 최적화)
+
+> 상태: **Before 규명 + ① pool sweep 완료**(2026-07-01). ②(tx밖)·③(pipeline)·④(캐시)는 진행.
+> 설계·진행 로그: `docs/plans/Query_Path_Optimization_Plan.md`.
+> 프로파일: 열린 루프(ramping-arrival-rate) 0→3,000 TPS ramp 1m → 3m 유지 → 30s down.
+> `dropped_iterations==0` 게이트로 "생성기가 목표 도착률을 실제 발사했는가"를 전제 단언.
+
+### Before — 순수 읽기 부하가 ~850 TPS 에서 포화 (3회 일관)
+
+| 지표 | SLO | 회차1 | 회차2 | 회차3 | 판정 |
+|------|-----|------:|------:|------:|:----:|
+| 조회 p95 (`type:list`) | ≤ 200ms | 9.46s | 9.65s | 11.98s | ❌ |
+| dropped_iterations | == 0 | 458,973 | 456,830 | 487,091 | ❌ |
+| 실효 http_reqs/s | (목표 3,000) | 781 | 783 | 686 | — |
+| http_req_failed | < 1% | 0% | 0% | 0% | ✅ |
+
+- **목표 3,000 TPS 미발사**(`Insufficient VUs, reached 5000` + dropped 46만) → 관측 p95 는 부하 모델이
+  무너진 값, **"~800 TPS 에서 포화한다"는 사실**이 신호(절대치 아님).
+- **병목 규명(Prometheus 실측)**: HikariCP `max=10`(기본·미튜닝)·`active=10`(포화)·`pending=190`·
+  `acquire max=3.9s`·`usage max=644ms`. 즉 조회가 `@Transactional` 안에서 **SCARD 를 페이지 편수만큼
+  직렬 왕복**하는 동안 DB 커넥션을 점유 → 풀 회전율 저하 → 대기 폭발. (§Plan §1.2)
+
+### ① DB pool size sweep — pool 은 지렛대가 아님 (독립 A1, pool×2회)
+
+baseline(SCARD 직렬·tx안·캐시off)에서 `DB_POOL_SIZE` 만 토글. 러너가 actuator
+`hikaricp.connections.max` 로 실제 반영을 검증(옛 풀로 도는 측정 무효 방지).
+
+| pool | TPS 회1 | TPS 회2 | 평균 TPS | 증분 | list p95 | pending | acquire max | usage max |
+|-----:|------:|------:|------:|:---:|------:|------:|------:|------:|
+| **10**(Before) | 840.8 | 857.8 | **849** | — | ~8.9s | 190 | 3.62s | 0.843s |
+| **20** | 918.6 | 928.9 | **924** | +8.8% | ~8.1s | 179 | 3.17s | 0.693s |
+| **30** | 950.5 | 950.4 | **950** | +2.8% | ~8.1s | 170 | 2.97s | 0.615s |
+| **50** | 959.9 | 972.5 | **966** | +1.7% | ~7.5s | 149 | 2.44s | 0.206s |
+
+- **교과서적 한계효용 체감**: 10→20 +8.8%, 20→30 +2.8%, 30→50 +1.7%. pool 을 **5배 올려도 TPS
+  849→966(+14%)에 그치고 ~960 TPS 로 점근**. 모든 pool 에서 여전히 threshold crossed(SLO 미달).
+- **pending·acquire 가 pool 을 늘려도 149·2.44s 로 여전히 높다** — 커넥션이 usage(점유) 동안 붙잡혀
+  대기가 근본 해소되지 않음. **근본 병목은 pool 크기가 아니라 커넥션 점유시간**(=Redis 왕복을 tx 안에서
+  기다림)임을 정량 입증.
+- 환경 제약 정합: MySQL 컨테이너 **2코어**(HikariCP 공식 이론값 `(2×2)+1≈5`). pool 상향의 실효는
+  2코어 병렬 한계에 묶임 → "pool 을 늘리면 되지 않나"라는 접근을 수치로 반박하는 Before 근거.
+- **후속**: ②(Redis 를 tx 밖으로)·③(pipeline)·④(캐시=E3 after)가 usage 를 낮춰 포화점을 올리는지 측정.
 
 ---
 
