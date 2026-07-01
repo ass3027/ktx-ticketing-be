@@ -7,6 +7,11 @@ spring:
     username: ${DB_USER:ktx}
     password: ${DB_PASSWORD:ktx1234}
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      # 커넥션 풀 상한. 기본 10 = HikariCP 기본값(현재/Before). T4-5 ① 측정에서 env 로 토글해
+      # 포화점 변화를 관측(재빌드 없이). HikariCP 공식 (core×2)+spindle 기준 2코어 환경 이론값≈5 라
+      # 10 도 이미 여유분 — 상향 효과는 점유시간(usage) 병목에 종속(§Query_Path_Optimization_Plan).
+      maximum-pool-size: ${DB_POOL_SIZE:10}
 
   # 스키마는 Flyway(db/migration/V*.sql)가 생성·관리. ddl-auto 는 validate 로 둬
   # 엔티티 ↔ 실제 스키마 불일치를 기동 시 즉시 검출(생성 컬럼은 미매핑이라 validate 무관).

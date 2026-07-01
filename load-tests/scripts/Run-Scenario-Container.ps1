@@ -36,6 +36,9 @@
 .PARAMETER Build
     첫 회차에서 app 이미지를 --build 로 재빌드해 코드 변경을 반영한다(Dockerfile=소스 빌드).
     코드를 바꾼 뒤 측정할 때 필수 — 없으면 옛 이미지로 돌아 변경이 반영되지 않는다(측정 무효).
+.PARAMETER DbPoolSize
+    HikariCP 커넥션 풀 크기(T4-5 ①). 기본 10(Before). L3 조회 최적화에서 pool 상향(20/30/50) 효과를
+    측정할 때 토글. env→yml 바인딩 관통 여부를 actuator hikaricp.connections.max 로 검증한다.
 .PARAMETER Dashboard
     k6 web dashboard 를 켜고 시계열 차트를 HTML 로 export 한다(results/{prefix}_dashboard.html).
     soak(L6) 의 응답시간 우상향(누수) 판정처럼 시계열 추세가 필요한 시나리오에서 켠다.
@@ -56,6 +59,7 @@ param(
     [ValidateSet('true','false')][string]$ExpiryBatchSideEffects = 'true',
     [int]$ExpiryBatchSize = 1000,
     [string]$ExpirySweepInterval = '2s',
+    [int]$DbPoolSize = 10,
     [switch]$PostRunCheck,
     [switch]$Build,
     [switch]$Dashboard
@@ -99,7 +103,14 @@ function Restart-App {
             if ($se -ne $env:BOOKING_EXPIRY_BATCH_SIDE_EFFECTS) { throw "sweep 보장 실패: BATCH_SIDE_EFFECTS=$se (기대 $env:BOOKING_EXPIRY_BATCH_SIDE_EFFECTS)" }
             if ($bs -ne $env:BOOKING_EXPIRY_BATCH_SIZE) { throw "sweep 보장 실패: BATCH_SIZE=$bs (기대 $env:BOOKING_EXPIRY_BATCH_SIZE)" }
             if ($si -ne $env:BOOKING_EXPIRY_SWEEP_INTERVAL) { throw "sweep 보장 실패: SWEEP_INTERVAL=$si (기대 $env:BOOKING_EXPIRY_SWEEP_INTERVAL)" }
-            Write-Host "app healthy, admission=$adm, sweep(sideEffects=$se size=$bs interval=$si)" -ForegroundColor Green
+            # DB 풀 크기는 env 뿐 아니라 실제 HikariCP max 로 확인(T4-5 ①이 옛 풀로 도는 측정 무효 방지).
+            # env→yml 바인딩까지 관통했는지 actuator 로 관측 — env 만 맞고 바인딩 틀리면 못 잡는다.
+            $pool = (docker compose exec -T app sh -c 'echo $DB_POOL_SIZE' 2>$null).Trim()
+            if ($pool -ne "$DbPoolSize") { throw "pool 보장 실패: DB_POOL_SIZE=$pool (기대 $DbPoolSize)" }
+            $hikariMax = (curl.exe -s "http://localhost:8080/actuator/metrics/hikaricp.connections.max" 2>$null |
+                Select-String -Pattern '"value":([0-9.]+)').Matches.Groups[1].Value
+            if ([int]$hikariMax -ne $DbPoolSize) { throw "HikariCP max 보장 실패: actuator=$hikariMax (기대 $DbPoolSize)" }
+            Write-Host "app healthy, admission=$adm, sweep(sideEffects=$se size=$bs interval=$si), hikariMax=$hikariMax" -ForegroundColor Green
             return
         }
         Start-Sleep -Seconds 2
@@ -155,7 +166,9 @@ $env:BOOKING_ADMISSION_MAX_ACTIVE = "$AdmissionMax"
 $env:BOOKING_EXPIRY_BATCH_SIDE_EFFECTS = $ExpiryBatchSideEffects
 $env:BOOKING_EXPIRY_BATCH_SIZE = "$ExpiryBatchSize"
 $env:BOOKING_EXPIRY_SWEEP_INTERVAL = $ExpirySweepInterval
-Write-Host "sweep 설정: batchSideEffects=$ExpiryBatchSideEffects batchSize=$ExpiryBatchSize interval=$ExpirySweepInterval" -ForegroundColor DarkCyan
+# HikariCP 풀 크기 주입(T4-5 ①). compose base 의 ${DB_POOL_SIZE:-10} 가 받음 → app 재기동 시 반영.
+$env:DB_POOL_SIZE = "$DbPoolSize"
+Write-Host "sweep 설정: batchSideEffects=$ExpiryBatchSideEffects batchSize=$ExpiryBatchSize interval=$ExpirySweepInterval, dbPool=$DbPoolSize" -ForegroundColor DarkCyan
 
 # k6 컨테이너 안의 시나리오 경로 (load-tests 가 /work/load-tests 로 마운트됨).
 $containerScenario = "/work/" + ($Scenario -replace '\\','/')
