@@ -34,7 +34,7 @@ import { check, sleep } from 'k6';
 import http from 'k6/http';
 import exec from 'k6/execution';
 import { Rate, Counter } from 'k6/metrics';
-import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
+import { textSummary } from '../common/k6-summary.js';
 import { SCHEDULE_COUNT, DEP, ARR, FROM_DATE } from '../common/config.js';
 import { userIds, getEntryToken, bookAuto, cancelReservation, listSchedules, checkConsistency } from '../common/helpers.js';
 

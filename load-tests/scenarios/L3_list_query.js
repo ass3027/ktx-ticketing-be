@@ -9,7 +9,7 @@
  * 합격: 조회 p95 ≤ 200ms, dropped_iterations==0 (목표 도착률을 실제로 발사했는가 = 전제)
  */
 import { check } from 'k6';
-import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
+import { textSummary } from '../common/k6-summary.js';
 import { DEP, ARR, FROM_DATE } from '../common/config.js';
 import { listSchedules } from '../common/helpers.js';
 

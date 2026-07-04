@@ -19,7 +19,7 @@
 import http from 'k6/http';
 import { check } from 'k6';
 import { Counter } from 'k6/metrics';
-import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
+import { textSummary } from '../common/k6-summary.js';
 import { SCHEDULE_ID, SEAT_INVENTORY_ID } from '../common/config.js';
 import { userIds, getEntryToken, bookSeat, checkConsistency } from '../common/helpers.js';
 
