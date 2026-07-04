@@ -323,6 +323,7 @@ public StringRedisTemplate stringRedisTemplate(LettuceConnectionFactory factory)
 | 2026-07-01 | ① pool size 토글·측정 | DB_POOL_SIZE env 외부화(러너 actuator 검증). pool 10/20/50 sweep(×2회): TPS 849→924→950→966(+14%만, 한계효용 체감)·pending 190→149·usage 0.84→0.21s. **pool 은 지렛대 아님**(~960 TPS 점근, SLO 미달 유지) → 근본=점유시간. 결과: P4_Result.md T4-5 | ✅ |
 | 2026-07-04 | ② 구현 | tx DB 단위를 `ScheduleQueryReader` 로 분리(프록시 제약 회피)·서비스 토글 분기·`train` fetch join 으로 tx밖 detached 안전. 단위 12 + 통합 1(on/off 등가·lazy) green | ✅ |
 | 2026-07-04 | ② 측정·독립 A2 | pool10 고정 off↔on(각3회). **usage_mean 6.92→2.58ms(−63%)·처리량 1,237→2,000/s(+62%)·acquire 133→2.3ms(−98%)·pending 190→77**. Little's law 정합, ①(+14%)의 4배 지렛대=근본 점유시간 확증. 단 여전히 SLO 미달(포화). usage 는 mean 으로 판정(max 는 outlier 지배). 결과: P4_Result.md T4-5 ② | ✅ |
-| | ② 측정·누적 C2 | pool50+tx밖 (측정 중) | ⏳ |
+| 2026-07-04 | ② 측정·누적 C2(1차) | pool50 off 2회만 유효(1,533·1,573/s·p95 3.6/3.1s) 후 **k6 원격 jslib(`k6-summary`) 컨테이너 DNS 해석 실패**(`no such host`)로 run3·txon 전량 init 실패 → txon 미확보. 코드 아님, 네트워크 flake. 재시도 예정(재발 시 jslib 로컬 vendoring). | ⚠️ 재시도 |
+| | ② 측정·누적 C2(재시도) | pool50 off↔on | ⏳ |
 | | ③ Redis pipeline 토글·측정 | | ⏳ |
 | | ④ 조회 단기 캐시(=E3 after) 토글·측정 | | ⏳ |
