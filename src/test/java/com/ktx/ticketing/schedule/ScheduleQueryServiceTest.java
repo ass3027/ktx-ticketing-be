@@ -2,29 +2,31 @@ package com.ktx.ticketing.schedule;
 
 import com.ktx.ticketing.booking.SeatPreemption;
 import com.ktx.ticketing.domain.Schedule;
-import com.ktx.ticketing.domain.ScheduleRepository;
 import com.ktx.ticketing.domain.Train;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * ScheduleQueryService 단위 테스트 — 커서 페이징 경계(limit 클램프·afterId 정규화·nextCursor 계산)와
- * 리포지토리 위임 인자를 검증한다. JPQL 자체(fetch join·복합 커서 동작)는 통합 테스트(T3-11)의 책임.
+ * ScheduleQueryService 단위 테스트 — 오케스트레이터의 책임을 검증한다: 커서 페이징 경계(limit 클램프·
+ * afterId 정규화·nextCursor)와 T4-5 ② 토글 라우팅(SCARD 를 tx 안/밖 어디로 보낼지). 실제 DB 조회·잔여석
+ * 매핑은 {@link ScheduleQueryReader}(및 그 단위 테스트)의 책임이라 여기선 mock 으로 경계만 확인한다.
  */
 @ExtendWith(MockitoExtension.class)
 class ScheduleQueryServiceTest {
@@ -33,94 +35,58 @@ class ScheduleQueryServiceTest {
     private static final String ARR = "부산";
     private static final LocalDateTime FROM = LocalDateTime.of(2026, 7, 1, 9, 0);
 
-    @Mock ScheduleRepository scheduleRepository;
+    @Mock ScheduleQueryReader reader;
     @Mock SeatPreemption preemption;
 
-    private ScheduleQueryService service() {
-        // 페이징 경계 테스트는 잔여석 값에 무관하므로 기본 0 으로 lenient stub.
-        // 잔여석/매진 매핑 테스트는 각자 명시적으로 재stub 한다.
-        lenient().when(preemption.availableCount(anyLong())).thenReturn(0L);
-        return new ScheduleQueryService(scheduleRepository, preemption);
+    /** off=SCARD tx 안(fetchPageWithSeats), on=SCARD tx 밖(fetchPage + 서비스가 매핑). */
+    private ScheduleQueryService service(boolean redisOutsideTx) {
+        return new ScheduleQueryService(reader, preemption, new QueryProperties(redisOutsideTx));
     }
 
-    /**
-     * Schedule 을 mock 한다. nextCursor 계산엔 id/출발시각만 필요하지만, DTO 매핑(ScheduleResponse.from)이
-     * train 을 참조하므로 NPE 를 피하려 train 도 실제 객체로 채운다.
-     */
-    private static Schedule scheduleOf(long id, LocalDateTime departureTime) {
-        Schedule s = mock(Schedule.class);
-        when(s.getId()).thenReturn(id);
-        when(s.getDepartureTime()).thenReturn(departureTime);
-        when(s.getTrain()).thenReturn(new Train("KTX 경부선", "KTX-001"));
-        return s;
-    }
-
-    private void stubRepositoryReturns(List<Schedule> page) {
-        when(scheduleRepository.findPageAfter(any(), any(), any(), any(), any())).thenReturn(page);
-    }
+    // --- 커서 페이징 경계 (토글 무관 — 기본 off 경로로 검증) ---
 
     @Test
     void limit_미지정시_기본값_8로_조회() {
-        stubRepositoryReturns(List.of());
+        service(false).search(DEP, ARR, FROM, null, null);
 
-        service().search(DEP, ARR, FROM, null, null);
-
-        assertThat(capturedPageable().getPageSize()).isEqualTo(8);
+        assertThat(capturedPageSize()).isEqualTo(8);
     }
 
     @Test
     void limit_상한_초과시_100으로_클램프() {
-        stubRepositoryReturns(List.of());
+        service(false).search(DEP, ARR, FROM, null, 999);
 
-        service().search(DEP, ARR, FROM, null, 999);
-
-        assertThat(capturedPageable().getPageSize()).isEqualTo(100);
+        assertThat(capturedPageSize()).isEqualTo(100);
     }
 
     @Test
     void limit_0이하시_1로_클램프() {
-        stubRepositoryReturns(List.of());
+        service(false).search(DEP, ARR, FROM, null, 0);
 
-        service().search(DEP, ARR, FROM, null, 0);
-
-        assertThat(capturedPageable().getPageSize()).isEqualTo(1);
+        assertThat(capturedPageSize()).isEqualTo(1);
     }
 
     @Test
     void afterId_미지정시_0으로_정규화해_첫_페이지_조회() {
-        stubRepositoryReturns(List.of());
+        service(false).search(DEP, ARR, FROM, null, 8);
 
-        service().search(DEP, ARR, FROM, null, 8);
-
-        ArgumentCaptor<Long> afterId = ArgumentCaptor.forClass(Long.class);
-        org.mockito.Mockito.verify(scheduleRepository)
-                .findPageAfter(eq(DEP), eq(ARR), eq(FROM), afterId.capture(), any());
-        assertThat(afterId.getValue()).isZero();
+        assertThat(capturedCursorId()).isZero();
     }
 
     @Test
     void afterId_지정시_그대로_위임() {
-        stubRepositoryReturns(List.of());
+        service(false).search(DEP, ARR, FROM, 42L, 8);
 
-        service().search(DEP, ARR, FROM, 42L, 8);
-
-        ArgumentCaptor<Long> afterId = ArgumentCaptor.forClass(Long.class);
-        org.mockito.Mockito.verify(scheduleRepository)
-                .findPageAfter(eq(DEP), eq(ARR), eq(FROM), afterId.capture(), any());
-        assertThat(afterId.getValue()).isEqualTo(42L);
+        assertThat(capturedCursorId()).isEqualTo(42L);
     }
 
     @Test
     void 페이지를_꽉_채우면_마지막_항목으로_nextCursor_발급() {
         int limit = 3;
         LocalDateTime lastTime = FROM.plusHours(2);
-        List<Schedule> full = List.of(
-                scheduleOf(1L, FROM),
-                scheduleOf(2L, FROM.plusHours(1)),
-                scheduleOf(7L, lastTime)); // 마지막 항목 id=7
-        stubRepositoryReturns(full);
+        stubWithSeats(List.of(resp(1L, FROM), resp(2L, FROM.plusHours(1)), resp(7L, lastTime)));
 
-        var result = service().search(DEP, ARR, FROM, null, limit);
+        var result = service(false).search(DEP, ARR, FROM, null, limit);
 
         assertThat(result.items()).hasSize(3);
         assertThat(result.nextCursor()).isNotNull();
@@ -130,11 +96,9 @@ class ScheduleQueryServiceTest {
 
     @Test
     void 페이지가_덜_차면_nextCursor_없음_마지막_페이지() {
-        int limit = 8;
-        List<Schedule> partial = List.of(scheduleOf(1L, FROM), scheduleOf(2L, FROM.plusHours(1)));
-        stubRepositoryReturns(partial);
+        stubWithSeats(List.of(resp(1L, FROM), resp(2L, FROM.plusHours(1))));
 
-        var result = service().search(DEP, ARR, FROM, null, limit);
+        var result = service(false).search(DEP, ARR, FROM, null, 8);
 
         assertThat(result.items()).hasSize(2);
         assertThat(result.nextCursor()).isNull();
@@ -142,52 +106,71 @@ class ScheduleQueryServiceTest {
 
     @Test
     void 빈_결과면_빈_리스트와_nextCursor_없음() {
-        stubRepositoryReturns(List.of());
+        stubWithSeats(List.of());
 
-        var result = service().search(DEP, ARR, FROM, null, 8);
+        var result = service(false).search(DEP, ARR, FROM, null, 8);
 
         assertThat(result.items()).isEmpty();
         assertThat(result.nextCursor()).isNull();
     }
 
+    // --- T4-5 ② 토글 라우팅 ---
+
     @Test
-    void 각_운행편의_잔여석을_avail_Set_크기로_채운다() {
-        Schedule a = scheduleOf(1L, FROM);
-        Schedule b = scheduleOf(2L, FROM.plusHours(1));
-        stubRepositoryReturns(List.of(a, b));
-        ScheduleQueryService service = service(); // 기본 stub(0) 을 먼저 깔고
-        when(preemption.availableCount(1L)).thenReturn(42L); // 운행편별로 덮어쓴다(구체 매처가 우선)
-        when(preemption.availableCount(2L)).thenReturn(7L);
+    void redisOutsideTx_off면_SCARD를_tx안에서_수행하는_경로로_위임() {
+        service(false).search(DEP, ARR, FROM, null, 8);
 
-        var result = service.search(DEP, ARR, FROM, null, 8);
-
-        assertThat(result.items()).extracting(ScheduleResponse::scheduleId, ScheduleResponse::remainingSeats)
-                .containsExactly(
-                        org.assertj.core.groups.Tuple.tuple(1L, 42L),
-                        org.assertj.core.groups.Tuple.tuple(2L, 7L));
+        verify(reader).fetchPageWithSeats(eq(DEP), eq(ARR), eq(FROM), anyLong(), anyInt());
+        verify(reader, never()).fetchPage(any(), any(), any(), anyLong(), anyInt());
     }
 
     @Test
-    void 잔여석_0이면_매진_그_외엔_매진_아님() {
-        Schedule soldOut = scheduleOf(1L, FROM);
-        Schedule available = scheduleOf(2L, FROM.plusHours(1));
-        stubRepositoryReturns(List.of(soldOut, available));
-        ScheduleQueryService service = service();
-        when(preemption.availableCount(1L)).thenReturn(0L);
-        when(preemption.availableCount(2L)).thenReturn(1L);
+    void redisOutsideTx_on이면_tx밖에서_잔여석을_avail_크기로_채운다() {
+        // scheduleOf 는 내부에서 when(...) 을 호출하므로 fetchPage stubbing 인자 안에 두면
+        // 중첩 stubbing(UnfinishedStubbing)이 된다 → mock 을 먼저 조립해 변수로 넘긴다.
+        List<Schedule> page = List.of(scheduleOf(1L, FROM), scheduleOf(2L, FROM.plusHours(1)));
+        when(reader.fetchPage(eq(DEP), eq(ARR), eq(FROM), anyLong(), anyInt())).thenReturn(page);
+        when(preemption.availableCount(1L)).thenReturn(42L);
+        when(preemption.availableCount(2L)).thenReturn(0L);
 
-        var result = service.search(DEP, ARR, FROM, null, 8);
+        var result = service(true).search(DEP, ARR, FROM, null, 8);
 
-        assertThat(result.items()).extracting(ScheduleResponse::scheduleId, ScheduleResponse::soldOut)
-                .containsExactly(
-                        org.assertj.core.groups.Tuple.tuple(1L, true),
-                        org.assertj.core.groups.Tuple.tuple(2L, false));
+        assertThat(result.items())
+                .extracting(ScheduleResponse::scheduleId, ScheduleResponse::remainingSeats, ScheduleResponse::soldOut)
+                .containsExactly(tuple(1L, 42L, false), tuple(2L, 0L, true));
+        verify(reader, never()).fetchPageWithSeats(any(), any(), any(), anyLong(), anyInt());
     }
 
-    private Pageable capturedPageable() {
-        ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
-        org.mockito.Mockito.verify(scheduleRepository)
-                .findPageAfter(any(), any(), any(), any(), captor.capture());
+    // --- helpers ---
+
+    private void stubWithSeats(List<ScheduleResponse> items) {
+        when(reader.fetchPageWithSeats(any(), any(), any(), anyLong(), anyInt())).thenReturn(items);
+    }
+
+    private int capturedPageSize() {
+        ArgumentCaptor<Integer> captor = ArgumentCaptor.forClass(Integer.class);
+        verify(reader).fetchPageWithSeats(any(), any(), any(), anyLong(), captor.capture());
         return captor.getValue();
+    }
+
+    private long capturedCursorId() {
+        ArgumentCaptor<Long> captor = ArgumentCaptor.forClass(Long.class);
+        verify(reader).fetchPageWithSeats(any(), any(), any(), captor.capture(), anyInt());
+        return captor.getValue();
+    }
+
+    /** nextCursor 는 응답의 departureTime/scheduleId 만 참조하므로 나머지 필드는 대표값으로 채운다. */
+    private static ScheduleResponse resp(long id, LocalDateTime departureTime) {
+        return new ScheduleResponse(id, "KTX-001", "KTX", DEP, ARR,
+                departureTime, departureTime.plusHours(2), 100, 10, false);
+    }
+
+    /** on 경로의 매핑(ScheduleResponse.from)이 train 을 참조하므로 train 을 실제 객체로 채운다. */
+    private static Schedule scheduleOf(long id, LocalDateTime departureTime) {
+        Schedule s = mock(Schedule.class);
+        when(s.getId()).thenReturn(id);
+        when(s.getDepartureTime()).thenReturn(departureTime);
+        when(s.getTrain()).thenReturn(new Train("KTX 경부선", "KTX-001"));
+        return s;
     }
 }
