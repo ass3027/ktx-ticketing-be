@@ -324,6 +324,6 @@ public StringRedisTemplate stringRedisTemplate(LettuceConnectionFactory factory)
 | 2026-07-04 | ② 구현 | tx DB 단위를 `ScheduleQueryReader` 로 분리(프록시 제약 회피)·서비스 토글 분기·`train` fetch join 으로 tx밖 detached 안전. 단위 12 + 통합 1(on/off 등가·lazy) green | ✅ |
 | 2026-07-04 | ② 측정·독립 A2 | pool10 고정 off↔on(각3회). **usage_mean 6.92→2.58ms(−63%)·처리량 1,237→2,000/s(+62%)·acquire 133→2.3ms(−98%)·pending 190→77**. Little's law 정합, ①(+14%)의 4배 지렛대=근본 점유시간 확증. 단 여전히 SLO 미달(포화). usage 는 mean 으로 판정(max 는 outlier 지배). 결과: P4_Result.md T4-5 ② | ✅ |
 | 2026-07-04 | ② 측정·누적 C2(1차) | pool50 off 2회만 유효(1,533·1,573/s·p95 3.6/3.1s) 후 **k6 원격 jslib(`k6-summary`) 컨테이너 DNS 해석 실패**(`no such host`)로 run3·txon 전량 init 실패 → txon 미확보. 코드 아님, 네트워크 flake. 재시도 예정(재발 시 jslib 로컬 vendoring). | ⚠️ 재시도 |
-| | ② 측정·누적 C2(재시도) | pool50 off↔on | ⏳ |
+| 2026-07-04 | ② 측정·누적 C2(재시도) | jslib vendoring 후 pool50 off↔on(각3회) clean. **C1 pool50·tx안 1,604/s(usage 26.4ms)→C2 pool50·tx밖 1,976/s(usage 5.13ms, +23%)**. 결정타: **pool10·tx밖(2,000)≈pool50·tx밖(1,976)** → **② 위에 ①(pool) 얹어도 이득 ≈0, ①②는 상호 대체재**(② 가 커넥션 hold 소거로 pool 이 풀 문제 자체를 없앰). pool↑ 는 2코어 DB 경합으로 usage↑. 운영 pool 기본 10 유지. 결과: P4_Result.md T4-5 ② 누적 | ✅ |
 | | ③ Redis pipeline 토글·측정 | | ⏳ |
 | | ④ 조회 단기 캐시(=E3 after) 토글·측정 | | ⏳ |
