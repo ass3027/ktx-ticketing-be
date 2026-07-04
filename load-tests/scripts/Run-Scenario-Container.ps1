@@ -39,6 +39,10 @@
 .PARAMETER DbPoolSize
     HikariCP 커넥션 풀 크기(T4-5 ①). 기본 10(Before). L3 조회 최적화에서 pool 상향(20/30/50) 효과를
     측정할 때 토글. env→yml 바인딩 관통 여부를 actuator hikaricp.connections.max 로 검증한다.
+.PARAMETER RedisOutsideTx
+    조회 SCARD 를 DB 트랜잭션 밖에서 수행할지(T4-5 ②). 'false'(기본·Before)=SCARD tx 안,
+    'true'=tx 밖(커넥션이 Redis 왕복 미포함 → usage 단축). 컨테이너에 실제 주입됐는지 env 로 검증한다
+    (효과는 actuator 아닌 부하 지표 usage/포화점으로 관측 — 커스텀 프로퍼티라 전용 미터가 없다).
 .PARAMETER Dashboard
     k6 web dashboard 를 켜고 시계열 차트를 HTML 로 export 한다(results/{prefix}_dashboard.html).
     soak(L6) 의 응답시간 우상향(누수) 판정처럼 시계열 추세가 필요한 시나리오에서 켠다.
@@ -60,6 +64,7 @@ param(
     [int]$ExpiryBatchSize = 1000,
     [string]$ExpirySweepInterval = '2s',
     [int]$DbPoolSize = 10,
+    [ValidateSet('true','false')][string]$RedisOutsideTx = 'false',
     [switch]$PostRunCheck,
     [switch]$Build,
     [switch]$Dashboard
@@ -110,7 +115,11 @@ function Restart-App {
             $hikariMax = (curl.exe -s "http://localhost:8080/actuator/metrics/hikaricp.connections.max" 2>$null |
                 Select-String -Pattern '"value":([0-9.]+)').Matches.Groups[1].Value
             if ([int]$hikariMax -ne $DbPoolSize) { throw "HikariCP max 보장 실패: actuator=$hikariMax (기대 $DbPoolSize)" }
-            Write-Host "app healthy, admission=$adm, sweep(sideEffects=$se size=$bs interval=$si), hikariMax=$hikariMax" -ForegroundColor Green
+            # 조회 tx-밖 토글도 컨테이너에 실제 주입됐는지 확인(T4-5 ② off/on 이 옛 값으로 도는 측정 무효 방지).
+            # 커스텀 프로퍼티라 actuator 미터가 없어 env 로만 검증 — 효과는 부하 지표 usage 로 관측한다.
+            $rtx = (docker compose exec -T app sh -c 'echo $BOOKING_QUERY_REDIS_OUTSIDE_TX' 2>$null).Trim()
+            if ($rtx -ne $env:BOOKING_QUERY_REDIS_OUTSIDE_TX) { throw "redisOutsideTx 보장 실패: BOOKING_QUERY_REDIS_OUTSIDE_TX=$rtx (기대 $env:BOOKING_QUERY_REDIS_OUTSIDE_TX)" }
+            Write-Host "app healthy, admission=$adm, sweep(sideEffects=$se size=$bs interval=$si), hikariMax=$hikariMax, redisOutsideTx=$rtx" -ForegroundColor Green
             return
         }
         Start-Sleep -Seconds 2
@@ -168,7 +177,9 @@ $env:BOOKING_EXPIRY_BATCH_SIZE = "$ExpiryBatchSize"
 $env:BOOKING_EXPIRY_SWEEP_INTERVAL = $ExpirySweepInterval
 # HikariCP 풀 크기 주입(T4-5 ①). compose base 의 ${DB_POOL_SIZE:-10} 가 받음 → app 재기동 시 반영.
 $env:DB_POOL_SIZE = "$DbPoolSize"
-Write-Host "sweep 설정: batchSideEffects=$ExpiryBatchSideEffects batchSize=$ExpiryBatchSize interval=$ExpirySweepInterval, dbPool=$DbPoolSize" -ForegroundColor DarkCyan
+# 조회 tx-밖 토글 주입(T4-5 ②). compose base 의 ${BOOKING_QUERY_REDIS_OUTSIDE_TX:-false} 가 받음.
+$env:BOOKING_QUERY_REDIS_OUTSIDE_TX = $RedisOutsideTx
+Write-Host "sweep 설정: batchSideEffects=$ExpiryBatchSideEffects batchSize=$ExpiryBatchSize interval=$ExpirySweepInterval, dbPool=$DbPoolSize, redisOutsideTx=$RedisOutsideTx" -ForegroundColor DarkCyan
 
 # k6 컨테이너 안의 시나리오 경로 (load-tests 가 /work/load-tests 로 마운트됨).
 $containerScenario = "/work/" + ($Scenario -replace '\\','/')

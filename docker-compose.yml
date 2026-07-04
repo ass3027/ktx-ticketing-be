@@ -28,6 +28,9 @@ services:
       BOOKING_EXPIRY_SWEEP_INTERVAL: ${BOOKING_EXPIRY_SWEEP_INTERVAL:-2s}
       # HikariCP 풀 크기 — T4-5 ① 측정용 env 토글(기본 10=Before). 재빌드 없이 pool 상향 실험.
       DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+      # 조회 SCARD 를 tx 밖에서 수행할지 — T4-5 ② 측정용 env 토글(기본 false=Before, SCARD 가 tx 안).
+      # true 로 두면 DB 커넥션이 Redis 왕복을 감싸지 않아 usage(점유시간) 단축. 재빌드 없이 토글.
+      BOOKING_QUERY_REDIS_OUTSIDE_TX: ${BOOKING_QUERY_REDIS_OUTSIDE_TX:-false}
     # AOT 캐시 영속화 — 컨테이너 재생성(force-recreate)에도 보존해 재 dump(~10s) 회피.
     # entrypoint 가 jar 변경 시 자동 무효화하므로 코드 변경 시엔 재 dump 된다.
     volumes:
