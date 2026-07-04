@@ -39,6 +39,10 @@ server:
   port: 8080
 
 booking:
+  query:
+    # T4-5 ②: 잔여석 SCARD 를 DB 트랜잭션 밖에서 수행할지. 기본 false=Before(SCARD 가 tx 안 → 커넥션이
+    # Redis 왕복 감쌈). env 로 재빌드 없이 flip 해 usage/포화점 변화 측정(① DB_POOL_SIZE 와 동일 패턴).
+    redis-outside-tx: ${BOOKING_QUERY_REDIS_OUTSIDE_TX:false}
   admission:
     # 동시 활성 세션 상한 K — L5 임계점 탐색(T4-7)에서 역산·확정 전까지의 잠정값.
     max-active: 100
