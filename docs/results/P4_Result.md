@@ -15,7 +15,7 @@
 | T4-2 서버 모니터링 | ✅ | Actuator + Micrometer + Prometheus + Grafana(JVM 대시보드) + Lettuce Redis 명령 지연 계측 |
 | T4-3 L1 직접선택 단일좌석 경쟁(정합성) | ✅ | **oversell=0·중복=0 3회 일관 달성** (호스트 JVM, refused≈0). 1 win / 999 정상 패배 |
 | T4-4 L2/L2b 정상·자동배정 처리량 | ✅ | L2: 예매 p95≤500ms·TPS 833~863·5xx 0.03% 합격 / **list p95~0.9s SLO(200ms) 미달**(→L3·E3). L2b: AUTO 1000석 정확 매진·oversell 0 |
-| T4-5 L3 조회 폭주 | ⏳(측정중) | **Before 규명 완료**: 순수 읽기 3,000TPS 목표에서 **~850TPS 포화**(dropped 46만·list p95 9s). 병목=풀10·pending190·usage644ms. **① pool 10→50 sweep**: TPS 849→966(+14%만, 한계효용 체감)·여전히 SLO 미달 → pool 은 지렛대 아님. ②③④ 진행 |
+| T4-5 L3 조회 폭주 | ⏳(측정중) | **Before 규명 + ①② 완료**: 3,000TPS 목표에서 포화. 병목=커넥션 점유시간. **① pool 5배=+14%**(지렛대 아님). **② SCARD tx밖: usage_mean 6.9→2.6ms(−63%)·처리량 +62%·acquire −98%** — 최대 단일 지렛대(근본=점유시간 확증). 단 여전히 SLO 미달 → ③④ 진행 |
 | T4-6 L4 입장 초과 | ✅ | **본 측정 3회 일관 그린**(2026-06-24, K=100·RATE=500): server_errors 0(수정 전 100)·reject 85.7~85.8%·reserve p95 69~97ms·dropped 0·k6Exit 0. B-2 수정 확정 |
 | T4-7 L5 임계점 탐색(K 확정) | ⏳ | `booking.admission.max-active` 잠정값 100 → L5 결과로 확정 |
 | T4-8 L6 지속 부하(soak) | ✅ | **완료**(2026-06-30): 부하 SLO 그린 + 정합성 게이트 green(L6_after K=2000: violation 0·k6Exit 0) + 시계열 우상향 없음(steady p95 기울기 −8.4ms/min, 하향 안정). 잔여 2건(B-1 해소 후 게이트·시계열 판정)을 T4-13 측정으로 해소 |
@@ -341,7 +341,7 @@ oversell 0, 매진 정확 수렴). 유일한 미달은 **조회(list) 지연**�
 
 ## T4-5 — L3 조회 폭주 (⏳ 측정 중 · 조회 경로 최적화)
 
-> 상태: **Before 규명 + ① pool sweep 완료**(2026-07-01). ②(tx밖)·③(pipeline)·④(캐시)는 진행.
+> 상태: **Before 규명 + ① pool sweep + ② tx밖 완료**(② 2026-07-04). ③(pipeline)·④(캐시)는 진행.
 > 설계·진행 로그: `docs/plans/Query_Path_Optimization_Plan.md`.
 > 프로파일: 열린 루프(ramping-arrival-rate) 0→3,000 TPS ramp 1m → 3m 유지 → 30s down.
 > `dropped_iterations==0` 게이트로 "생성기가 목표 도착률을 실제 발사했는가"를 전제 단언.
@@ -381,6 +381,37 @@ baseline(SCARD 직렬·tx안·캐시off)에서 `DB_POOL_SIZE` 만 토글. 러너
 - 환경 제약 정합: MySQL 컨테이너 **2코어**(HikariCP 공식 이론값 `(2×2)+1≈5`). pool 상향의 실효는
   2코어 병렬 한계에 묶임 → "pool 을 늘리면 되지 않나"라는 접근을 수치로 반박하는 Before 근거.
 - **후속**: ②(Redis 를 tx 밖으로)·③(pipeline)·④(캐시=E3 after)가 usage 를 낮춰 포화점을 올리는지 측정.
+
+### ② Redis(SCARD)를 tx 밖으로 — 커넥션 점유시간이 진짜 지렛대 (독립 A2, pool10 고정·각 3회)
+
+같은 pool(10)에서 `BOOKING_QUERY_REDIS_OUTSIDE_TX` 만 off→on 토글해 **같은 세션**에서 L3 재측정
+(off=Before=SCARD 가 `@Transactional` 안, on=After=SCARD 가 tx 밖). 러너가 컨테이너 주입값을 검증.
+usage 는 **평균**(sum/count 증분)으로 본다 — `usage_seconds_max` 는 드문 outlier(부팅·GC 등)에 지배돼
+점유시간 변화를 못 드러낸다(off 0.407s vs on 0.389s 로 거의 불변). 점유시간의 실체는 평균.
+
+| 지표(3회 대표) | off=Before(SCARD in tx) | on=After(SCARD out of tx) | Δ |
+|------|------:|------:|:---:|
+| **usage_mean**(커넥션 점유시간) | 6.92 ms | **2.58 ms** | **−63%** |
+| acquire_mean(획득 대기) | 133.5 ms | **2.30 ms** | −98% |
+| acquire max | 1.48 s | 0.24 s | −84% |
+| pending max(대기 큐) | 190 | 77 | −59% |
+| active | 10 | 10 | = |
+| **실효 http_reqs/s** | 1,230 / 1,250 / 1,237 | 1,995 / 2,001 / 2,009 | **+62%** |
+| list p95 | 4.19 / 4.04 / 4.12 s | 2.30 / 2.35 / 2.36 s | −43% |
+| dropped_iterations | ~340,000 | ~133,000 | −61% |
+
+- **Little's law 로 정합**: 포화 시 처리량 ≈ pool / usage_mean. active(10)·pool(10) 고정에서 점유시간을
+  6.92→2.58ms(−63%) 로 줄이자 처리량이 1,237→2,000/s(+62%) 로 거의 같은 비율 상승. **커넥션이 Redis
+  왕복을 tx 안에서 기다리던 시간**이 사라져 풀 회전율이 오른 것 — ① 이 지목한 "근본=점유시간" 을 직접 입증.
+- **① 대비 지렛대 크기**: pool 5배(+14%) vs tx밖(+62%). **pool 은 곁가지, tx 경계가 본질**이라는 ①의 결론을
+  ② 가 정량 확증. acquire 대기가 133→2.3ms(−98%) 로 붕괴한 게 그 직접 증거(커넥션이 빨리 반환됨).
+- **정합성**: 잔여석·매진 판정 불변(같은 avail Set SCARD, 위치만 이동). `ScheduleQueryPathIntegrationTest`
+  가 실 DB/Redis 로 on/off 응답 등가 + tx-밖 detached `getTrain()` 안전(fetch join)을 회귀 가드.
+- **한계**: on 도 여전히 dropped>0·p95≫200ms → **②만으론 SLO(200ms) 미달**. 3,000 TPS 목표에 아직 포화
+  (~2,000/s). ③(pipeline)·④(캐시)로 SCARD 왕복 자체를 더 줄여야 함. ② 는 지금까지 최대 단일 지렛대.
+- **주의(세션 드리프트)**: 이 in-session off baseline(1,237/s·p95 4.1s)은 §1 원 Before(781/s·p95 8.9s)와
+  절대값이 다르다 — 포화 처리량은 머신 상태에 의존하고 두 측정이 다른 시점이라서다. 그래서 ②는 §4.1 원칙대로
+  **같은 세션 off↔on** 을 비교했다(절대값이 아니라 토글 델타가 결론). avail 은 정상 워밍(대부분 스케줄 SCARD>0).
 
 ---
 
