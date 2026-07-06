@@ -109,6 +109,7 @@ JAVA_HOME="$(find "$HOME/.jdks" -maxdepth 1 -iname '*25*' -type d 2>/dev/null | 
 
 - **작업 시작 시 `docs/KTX_Ticketing_Task_Checklist.md` 의 🚨 긴급 처리 섹션을 먼저 확인한다.** 미완(`[ ]`/`[~]`) 긴급 task(H-/U- 등)가 있으면, 정규 task(P-) 보다 우선해 처리하거나 최소한 사용자에게 그 존재를 알리고 진행 방향을 확인한다(세션 간 인수인계가 자동으로 읽히지 않으므로).
 - **진행 상황을 파악할 때 in-session task list(TaskList)만 보지 말고 `git log` 커밋 이력도 함께 확인한다.** TaskList 는 세션 내 단기 추적용이라 세션이 바뀌면 비어 있다 — 세션 간에 남는 진짜 진행 상황은 **커밋 이력 + 관련 계획/결과 문서의 진행 로그**(예: `docs/plans/*_Plan.md` §진행 로그, `docs/results/P4_Result.md`)에 있다. "task list 가 비었다 = 할 일이 없다"로 오판하지 말 것. 다단계 작업을 이어받거나 재개할 때는 `git log --oneline` 으로 최근 커밋을 먼저 훑어 어디까지 왔는지 확인한다.
+- **계획은 2단으로 관리한다 — 전체(task_list) + 세부(주간계획).** 전체 계획·진행 현황은 `docs/KTX_Ticketing_Task_Checklist.md`(task_list)로, 특정 주의 세부 실행 계획은 `docs/plans/Weekly_Plan_*.md`(주간계획)로 나눠 관리한다. **주간계획을 마무리한 후에는 그 결과를 반드시 task_list 에 반영한다**(해당 task 상태 `[x]` 갱신 + 진행 현황 요약표 갱신). 주간계획은 세부 실행용이고, 세션 간에 남는 정본 진행 상태는 task_list 이므로 둘을 동기화하지 않으면 진행률이 어긋난다.
 - 계획 승인 없이 구현 시작 금지
 - 커밋 단위·테스트 유효성 규칙은 아래 각 섹션 참조
 
