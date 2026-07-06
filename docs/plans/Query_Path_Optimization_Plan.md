@@ -226,7 +226,7 @@ public StringRedisTemplate stringRedisTemplate(LettuceConnectionFactory factory)
 | ① | **DB pool size 상향** | acquire·pending(대기 큐) | `spring.datasource.hikari.maximum-pool-size` | 그대로 N | — | 불변 |
 | ② | **Redis 를 tx 밖으로** | usage(커넥션이 Redis 왕복 안 감쌈) | `booking.query.redis-outside-tx` | 그대로 N | ↓↓ | 불변 |
 | ③ | **Redis pipeline** | RTT(N회 → 1회) | `booking.query.pipeline` | N→1 | ↓ | 불변 |
-| ④ | **조회 단기 캐시**(TTL ≤ 2s) | SCARD 자체 제거 | `booking.query-cache.enabled` | 0(히트 시) | ↓↓↓ | 약(≤2s) |
+| ④ | **Redis 공유 단기 캐시**(TTL ≤ 2s) + single-flight | SCARD·DB 조회 자체 제거 | `booking.query-cache.enabled` | 0 SCARD(+GET 1) | ↓↓↓ | 약(≤2s) |
 
 ### 각 기법 설계 메모
 
@@ -240,9 +240,43 @@ public StringRedisTemplate stringRedisTemplate(LettuceConnectionFactory factory)
 - **③ Redis pipeline** — N회 SCARD 를 **1회 왕복**으로 묶음(`RedisTemplate.executePipelined`
   또는 Lettuce 파이프라인). 반복 자체는 남지만 왕복 지연이 RTT×N → RTT×1. ②와 **독립**(tx 안이든
   밖이든 파이프라인화 가능)이라 조합 측정 대상.
-- **④ 조회 단기 캐시** — 리스트+잔여석을 짧은 TTL(≤2s)로 캐시 → SCARD 를 아예 제거. **2-tier
-  일관성 모델이 명시 허용**(조회/표시는 약한 일관성, staleness ≤ ~2s). **이 토글이 곧 E3 의 cache on**.
-  매진은 보수적(캐시로 "매진인데 available" 표시 금지, 반대 방향만 허용).
+- **④ Redis 공유 단기 캐시** — 리스트+잔여석을 짧은 TTL(≤2s)로 캐시 → SCARD·DB 조회를 아예 제거.
+  **2-tier 일관성 모델이 명시 허용**(조회/표시는 약한 일관성, staleness ≤ ~2s). **이 토글이 곧 E3 의
+  cache on**. 매진은 보수적(캐시로 "매진인데 available" 표시 금지, 반대 방향만 허용). 상세 = §3.5.
+
+### 3.5 ④ 상세 설계 — Redis 공유 캐시 + single-flight (2026-07-06 개정)
+
+> **왜 로컬(Caffeine) 아닌 Redis 공유인가**: 이 프로젝트 목적은 실 KTX 예매(멀티 인스턴스 전제) 구현이다.
+> 잠긴 2-tier 결정도 표시 경로를 "**served from Redis counters / short-TTL cache**"로 명시한다(CLAUDE.md).
+> 로컬 캐시는 인스턴스별로 값이 갈려 표시가 인스턴스 간 불일치 → 공유 캐시가 정합. 히트가 GET 1왕복으로
+> 0 은 아니지만, T4-5 가 규명한 병목은 **DB 풀 점유**이고 GET 은 tx 밖·풀 무접촉이라 병목은 그대로 제거된다.
+
+- **키/값**: 키 `qcache:list:{dep|arr|from|cursorId|pageSize}`, 값 = `ScheduleListResponse` **JSON**.
+  직렬화는 주입 `ObjectMapper`(Boot 기본 JavaTimeModule → `LocalDateTime` ISO). `StringRedisTemplate`
+  (@Primary·Lettuce 계측 경로)로 `opsForValue().set(key, json, ttl)` → 캐시 GET/SET 이 `lettuce_command_*`
+  로 잡혀 E3 지표(SCARD rate 붕괴 → GET rate)로 관측된다. TTL **기본 1s**(SLA 2s 아래 여유).
+- **히트 경로**: GET 1회, DB 커넥션 미획득 + SCARD×N 소거. 미스 경로는 ②③ 조합(`computeUncached`)을
+  그대로 타 **C4(전부 on) 자연 합성**.
+- **single-flight(stampede 방어) — double-checked locking**: 공유 캐시 + 핫키는 TTL 만료 순간 여러
+  인스턴스가 동시에 미스 → 일제히 DB 재계산(thundering herd). 이를 기존 `DistributedLock.executeWithLock`
+  으로 막는다:
+  1. GET 히트 → 반환.
+  2. 미스 → `executeWithLock(qcacheKey, action)`. action = **캐시 재-GET**(winner 가 이미 채웠으면 그 값
+     반환 → loser 는 재계산 안 함) → 여전히 미스면 `loader.get()`(②③ 컴퓨트) → SET(ttl) → 반환.
+  3. 반환 null(=락 WAIT 타임아웃, 희귀) → 직접 `loader` + SET 폴백(정합성 우선). `loader` 는 non-null
+     보장이라 null 은 "락 미획득"만 의미 → 폴백 신호로 안전.
+  → 만료 순간 herd 가 몰려도 **실제 DB 재계산 1회**, 나머지는 락 뒤 재-GET 히트로 즉시 통과.
+- **락 timing 재사용**: `RedissonDistributedLock` 은 WAIT 5s·LEASE 10s(예매용 튜닝). 캐시엔 길어 보이나
+  double-check 로 loser 실 대기 ≈ winner 컴퓨트 시간(수십 ms)에 수렴, 5s 는 degenerate ceiling. 그대로
+  재사용. 만료 스파이크가 측정에서 문제되면 캐시 전용 short-wait 락으로 분리(폴백안).
+- **토글(②③ 동일 패턴)**: `QueryCacheProperties(enabled, ttl)`(prefix `booking.query-cache`) + yml +
+  compose env `BOOKING_QUERY_CACHE_ENABLED`(기본 false=Before). 프록시 기반 `@Cacheable` 은 런타임 토글
+  불가 → 수동 분기(②③과 동일 사유). `ScheduleQueryService.search()` 에서 enabled 면
+  `cache.getOrLoad(key, () -> computeUncached(...))`.
+- **정합성**: 표시 staleness ≤TTL(전역 1창, 인스턴스 간 일관). **오버셀 0** — 캐시는 예매 경로 미접촉,
+  예매는 강한 일관성 critical section 에서 재검증. "매진인데 available" 이 ≤TTL 뜰 수 있으나 예매 시도가
+  SREM=0 으로 자동 실패 → self-correct(2-tier 계약 내). README C6 트레이드오프: 로컬 대신 공유(일관성) +
+  single-flight(stampede 방어).
 
 ---
 
@@ -327,4 +361,5 @@ public StringRedisTemplate stringRedisTemplate(LettuceConnectionFactory factory)
 | 2026-07-04 | ② 측정·누적 C2(재시도) | jslib vendoring 후 pool50 off↔on(각3회) clean. **C1 pool50·tx안 1,604/s(usage 26.4ms)→C2 pool50·tx밖 1,976/s(usage 5.13ms, +23%)**. 결정타: **pool10·tx밖(2,000)≈pool50·tx밖(1,976)** → **② 위에 ①(pool) 얹어도 이득 ≈0, ①②는 상호 대체재**(② 가 커넥션 hold 소거로 pool 이 풀 문제 자체를 없앰). pool↑ 는 2코어 DB 경합으로 usage↑. 운영 pool 기본 10 유지. 결과: P4_Result.md T4-5 ② 누적 | ✅ |
 | 2026-07-04 | ③ 구현 | `SeatPreemption.availableCounts` 배치(SCARD pipeline) + 조회 경로 토글(`booking.query.pipeline`, ②와 독립 2×2). `executePipelined` 는 SessionCallback 사용(RedisCallback 의 connection 은 프록시라 StringRedisConnection 캐스팅 불가). 단위 + 실 Redis 통합테스트(순서보존·직렬등가·빈입력) green | ✅ |
 | 2026-07-06 | ③ 결론(측정 갈음) | **측정 안 함 — 효과크기 논증으로 갈음.** pipeline 절감=RTT×(N−1). 실운영 N≈8(`DEFAULT_LIMIT`)에선 ~7RTT≈**~1.4ms** = 회차 간 노이즈·측정 바닥 이하 → **N≈8 에선 조회 p95/포화점 레버 아님**. N 을 50(시드 상한)으로 부풀리면 ~10ms 로 겨우 가시하나 **운영점(N≈8±2)이 아니라 measurement theater** → 기각. 코드는 대용량 페이지 안전용으로 유지(무해, N↑ 시 자동 이득). 남은 격차 실질 레버=④(캐시=E3, 왕복을 줄이는 ③이 아니라 없애는 ④). 결과: P4_Result.md T4-5 ③ | ✅ |
+| 2026-07-06 | ④ 계획 개정 | 캐시 기술을 **Redis 공유 + single-flight** 로 확정(§3.5). 로컬(Caffeine)은 멀티 인스턴스에서 표시 불일치 → 잠긴 2-tier("served from Redis short-TTL cache")와 정합하게 공유 선택. 히트=GET 1왕복(0 아님)이나 DB 풀 병목은 tx밖 GET 이라 그대로 제거. stampede 는 기존 `DistributedLock` double-check single-flight 로 DB 재계산 1회 보장. | 📝 계획 |
 | | ④ 조회 단기 캐시(=E3 after) 토글·측정 | | ⏳ |

@@ -23,7 +23,7 @@ P6 산출물(README·그래프)이 이 수치에 의존하므로, 여기서 못 
 | # | 블록 | 작업 | 등급 | 완료 기준 (측정 게이트) |
 |:-:|------|------|:---:|------|
 | 1 | 월~화 | ✅ **T4-5 ③ pipeline** — 구현+테스트 완료. **측정은 효과크기 논증으로 갈음**: N≈8 운영점에선 ~1.4ms=노이즈 이하 → 레버 아님(N 부풀린 측정=theater 로 기각). 코드는 대용량 페이지 안전용 유지 | Should | ~~A3·C3 측정~~ → 운영 N 에서 효과 바닥 이하 논증(P4_Result.md T4-5 ③) |
-| 2 | 수 | **T4-5 ④ 조회 캐시** (`booking.query-cache.enabled`, TTL≤2s) 구현 + A4·C4 측정 | Should | 매진 보수성 유지. **E3 after 확보**(= T4-9 E3 자동 완료) |
+| 2 | 수 | **T4-5 ④ 조회 캐시** — **Redis 공유 + single-flight**(`booking.query-cache.enabled`, TTL≤2s) 구현 + A4·C4 측정. 로컬 아닌 공유(멀티 인스턴스 일관, 잠긴 2-tier 정합), stampede 는 `DistributedLock` double-check. 설계 §3.5 | Should | 매진 보수성·오버셀 0 유지. **E3 after 확보**(= T4-9 E3 자동 완료) |
 | 3 | 목 | **T4-7 L5 임계점** 탐색 → **활성자 상한 K 역산·확정** → 입장 제어 소급 반영 | **Must** | K 결정값 + 근거 수치, `booking.admission.max-active` 반영 |
 | 4 | 금 | **T4-9 E1·E2** — E1(락 on/off → oversell 사라짐)·E2(입장 on/off) Before/After + 그래프 | **Must** | E1: 락 off 시 oversell>0 재현 / E2: 초과 흡수 대조 |
 | 5 | 버퍼(주말) | `P4_Result.md` 정리 + Grafana 그래프 캡처 + 체크리스트 `[x]` 처리 | — | T4-5·T4-7·T4-9 완료 → **M4 완결** |
