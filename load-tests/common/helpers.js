@@ -127,12 +127,17 @@ export function consistencyDetail() {
     };
 }
 
+// 옵션: 페이지 크기(=요청당 SCARD N). 미설정 시 서버 기본(DEFAULT_LIMIT=8). T4-5 ③ pipeline 은
+// N 이 클수록 효과(RTT×N→×1)가 커지므로 LIMIT 로 N 을 키워 효과크기를 가시화한다(시드 상한 50).
+const LIMIT = __ENV.LIMIT;
+
 /**
  * 운행 리스트 조회.
  */
 export function listSchedules(dep, arr, from) {
+    const limitParam = LIMIT ? `&limit=${LIMIT}` : '';
     return http.get(
-        `${BASE_URL}/api/schedules?dep=${encodeURIComponent(dep)}&arr=${encodeURIComponent(arr)}&from=${encodeURIComponent(from)}`,
+        `${BASE_URL}/api/schedules?dep=${encodeURIComponent(dep)}&arr=${encodeURIComponent(arr)}&from=${encodeURIComponent(from)}${limitParam}`,
         { tags: { type: 'list' } }
     );
 }

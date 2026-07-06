@@ -15,6 +15,9 @@ import { listSchedules } from '../common/helpers.js';
 
 // E3 Before/After 는 동일 도착률로 비교해야 하므로 기본값 고정(필요시 RATE 로 주입).
 const RATE = parseInt(__ENV.RATE || '3000');
+// 유지 구간 길이. 기본 3m(기존 비교 하위호환). p95 는 3,000TPS 에서 이미 과표본이라(90s=27만 요청)
+// 정상상태(ramp 후)만 확보되면 단축해도 점추정이 안정 → 남는 시간은 회차 반복에 써 회차 간 분산을 본다.
+const HOLD = __ENV.HOLD || '3m';
 
 export const options = {
     scenarios: {
@@ -24,7 +27,7 @@ export const options = {
             timeUnit: '1s',
             stages: [
                 { duration: '1m', target: RATE },
-                { duration: '3m', target: RATE },
+                { duration: HOLD, target: RATE },
                 { duration: '30s', target: 0 },
             ],
             // 도착률을 못 채우면 dropped_iterations 발생 → 측정 무효. Little's law(≈RATE×p95)

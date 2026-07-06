@@ -47,6 +47,12 @@
     조회 SCARD 를 파이프라인 1회 왕복으로 묶을지(T4-5 ③). 'false'(기본·Before)=직렬 N회,
     'true'=배치 1회(RTT×N → RTT×1). ②와 독립 토글. 컨테이너에 실제 주입됐는지 env 로 검증한다
     (커스텀 프로퍼티라 전용 미터 없음 — 효과는 부하 지표 조회 p95/포화점으로 관측).
+.PARAMETER Hold
+    L3 유지 구간 길이(k6 __ENV.HOLD). 기본 '3m'(기존 비교 하위호환). p95 는 3,000TPS 에서 과표본이라
+    정상상태만 확보되면 '90s' 등으로 단축 가능 → 회차당 시간을 줄여 반복 횟수(회차 간 분산)에 투자한다.
+.PARAMETER Limit
+    조회 페이지 크기(k6 __ENV.LIMIT = 요청당 SCARD N). 기본 0=미주입(서버 기본 8). T4-5 ③ pipeline 은
+    N 이 클수록 효과가 커지므로 50 등으로 키워 효과크기를 가시화한다(시드 상한 50).
 .PARAMETER Dashboard
     k6 web dashboard 를 켜고 시계열 차트를 HTML 로 export 한다(results/{prefix}_dashboard.html).
     soak(L6) 의 응답시간 우상향(누수) 판정처럼 시계열 추세가 필요한 시나리오에서 켠다.
@@ -70,6 +76,8 @@ param(
     [int]$DbPoolSize = 10,
     [ValidateSet('true','false')][string]$RedisOutsideTx = 'false',
     [ValidateSet('true','false')][string]$Pipeline = 'false',
+    [string]$Hold = '3m',
+    [int]$Limit = 0,
     [switch]$PostRunCheck,
     [switch]$Build,
     [switch]$Dashboard
@@ -140,13 +148,14 @@ function Invoke-K6Run {
     # Tee-Object 로 파일 저장과 동시에 Out-Host 로 콘솔에 표시(k6 기본 출력). Out-Null 금지.
     # 함수 안에서는 Tee 의 파이프 출력이 반환값으로 새므로 Out-Host 로 흡수 → return 만 출력.
     param([string[]]$Compose, [string]$ContainerScenario, [int]$ScheduleId, [int]$SeatInventoryId,
-          [string]$RunLog, [string]$ResultPrefix, [string[]]$DashboardEnv = @())
+          [string]$RunLog, [string]$ResultPrefix, [string[]]$DashboardEnv = @(), [string[]]$ScenarioEnv = @())
 
     Write-Host "k6(컨테이너) 실행 → $RunLog" -ForegroundColor Cyan
     # RESULT_PREFIX 를 시나리오에 넘겨 handleSummary 의 summary 파일명을 분기(연속 회차 덮어쓰기 방지).
+    # ScenarioEnv = 시나리오별 -e 인자(HOLD/LIMIT 등). k6 __ENV 로 읽힌다.
     docker compose @Compose run --rm `
         -e SCHEDULE_ID=$ScheduleId -e SEAT_INVENTORY_ID=$SeatInventoryId -e RESULT_PREFIX=$ResultPrefix `
-        @DashboardEnv `
+        @DashboardEnv @ScenarioEnv `
         k6 run $ContainerScenario 2>&1 |
         Tee-Object -FilePath $RunLog | Out-Host
     return $LASTEXITCODE
@@ -189,7 +198,10 @@ $env:DB_POOL_SIZE = "$DbPoolSize"
 $env:BOOKING_QUERY_REDIS_OUTSIDE_TX = $RedisOutsideTx
 # 조회 pipeline 토글 주입(T4-5 ③). compose base 의 ${BOOKING_QUERY_PIPELINE:-false} 가 받음.
 $env:BOOKING_QUERY_PIPELINE = $Pipeline
-Write-Host "sweep 설정: batchSideEffects=$ExpiryBatchSideEffects batchSize=$ExpiryBatchSize interval=$ExpirySweepInterval, dbPool=$DbPoolSize, redisOutsideTx=$RedisOutsideTx, pipeline=$Pipeline" -ForegroundColor DarkCyan
+# 시나리오별 k6 __ENV 주입(HOLD/LIMIT). Limit=0 이면 미주입 → 시나리오가 서버 기본(8)을 씀.
+$scenarioEnv = @('-e', "HOLD=$Hold")
+if ($Limit -gt 0) { $scenarioEnv += @('-e', "LIMIT=$Limit") }
+Write-Host "sweep 설정: batchSideEffects=$ExpiryBatchSideEffects batchSize=$ExpiryBatchSize interval=$ExpirySweepInterval, dbPool=$DbPoolSize, redisOutsideTx=$RedisOutsideTx, pipeline=$Pipeline, hold=$Hold, limit=$Limit" -ForegroundColor DarkCyan
 
 # k6 컨테이너 안의 시나리오 경로 (load-tests 가 /work/load-tests 로 마운트됨).
 $containerScenario = "/work/" + ($Scenario -replace '\\','/')
@@ -216,7 +228,7 @@ try {
         } else { @() }
         $k6Exit = Invoke-K6Run -Compose $compose -ContainerScenario $containerScenario `
             -ScheduleId $ScheduleId -SeatInventoryId $SeatInventoryId -RunLog $runLog `
-            -ResultPrefix $ResultPrefix -DashboardEnv $dashEnv
+            -ResultPrefix $ResultPrefix -DashboardEnv $dashEnv -ScenarioEnv $scenarioEnv
 
         if ($PostRunCheck) {
             $checkLog = Join-Path $resultsDir "${ResultPrefix}_container_run_$i.check.txt"

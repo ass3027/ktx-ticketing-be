@@ -18,13 +18,20 @@
     스윕할 ③ 토글 목록. 기본 false,true (Before → After). 순서대로 실행.
 .PARAMETER Iterations
     토글당 L3 회차 수. 기본 3(일관성 확인).
+.PARAMETER Hold
+    L3 유지 구간(회차당 길이). 기본 '90s' — p95 는 과표본이라 단축해도 점추정 안정, 시간을 회차 반복에 투자.
+.PARAMETER Limit
+    조회 페이지 크기(=요청당 SCARD N). 기본 50 — pipeline 효과(RTT×N→×1)는 N 에 비례하므로 시드 상한(50)까지
+    키워 효과크기를 가시화한다. N=8(기본)에선 효과가 측정 바닥 이하라 의미 없음.
 #>
 [CmdletBinding()]
 param(
     [int]$PoolSize = 10,
     [ValidateSet('true','false')][string]$RedisOutsideTx = 'false',
     [ValidateSet('true','false')][string[]]$Pipeline = @('false', 'true'),
-    [int]$Iterations = 3
+    [int]$Iterations = 3,
+    [string]$Hold = '90s',
+    [int]$Limit = 50
 )
 
 $ErrorActionPreference = 'Stop'
@@ -32,24 +39,27 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Push-Location $repoRoot
 try {
     $txLabel = if ($RedisOutsideTx -eq 'true') { 'txon' } else { 'txoff' }
+    $nLabel = if ($Limit -gt 0) { $Limit } else { 8 }  # Limit=0 이면 서버 기본 N=8.
     $first = $true
     foreach ($pl in $Pipeline) {
         $label = if ($pl -eq 'true') { 'on' } else { 'off' }
-        Write-Host "`n=========== POOL=$PoolSize · redisOutsideTx=$RedisOutsideTx · pipeline=$pl ($Iterations 회) ===========" -ForegroundColor Magenta
+        Write-Host "`n=========== POOL=$PoolSize · redisOutsideTx=$RedisOutsideTx · N=$nLabel · pipeline=$pl ($Iterations 회, hold=$Hold) ===========" -ForegroundColor Magenta
         $args = @{
             Scenario       = 'load-tests/scenarios/L3_list_query.js'
-            ResultPrefix   = "L3_pool${PoolSize}_${txLabel}_pipe${label}"
+            ResultPrefix   = "L3_pool${PoolSize}_${txLabel}_n${nLabel}_pipe${label}"
             Iterations     = $Iterations
             AdmissionMax   = 2000        # 조회 부하 — 입장 제어 우회
             DbPoolSize     = $PoolSize
             RedisOutsideTx = $RedisOutsideTx
             Pipeline       = $pl
+            Hold           = $Hold
+            Limit          = $Limit
         }
         # 첫 토글의 첫 실행만 재빌드(코드/yml 을 이미지에 반영). 이후는 env 토글만.
         if ($first) { $args['Build'] = $true; $first = $false }
         & "$PSScriptRoot/Run-Scenario-Container.ps1" @args
     }
-    Write-Host "`n전체 pipeline sweep 종료. 결과: load-tests/results/L3_pool${PoolSize}_${txLabel}_pipe*_container_run_*.txt" -ForegroundColor Green
+    Write-Host "`n전체 pipeline sweep 종료. 결과: load-tests/results/L3_pool${PoolSize}_${txLabel}_n${nLabel}_pipe*_container_run_*.txt" -ForegroundColor Green
 }
 finally {
     Pop-Location
