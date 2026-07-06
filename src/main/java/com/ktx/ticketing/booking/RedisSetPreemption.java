@@ -2,6 +2,8 @@ package com.ktx.ticketing.booking;
 
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.Nullable;
+import org.springframework.data.redis.core.RedisOperations;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
@@ -9,6 +11,7 @@ import org.springframework.stereotype.Service;
 import java.time.Clock;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -96,6 +99,33 @@ public class RedisSetPreemption implements SeatPreemption {
     public long availableCount(Long scheduleId) {
         Long size = redis.opsForSet().size(key(scheduleId));
         return size == null ? 0 : size;
+    }
+
+    @Override
+    public Map<Long, Long> availableCounts(List<Long> scheduleIds) {
+        if (scheduleIds.isEmpty()) {
+            return Map.of();
+        }
+        // 콜백 안의 size() 는 SCARD 를 파이프라인에 큐잉만 하고 null 을 돌려준다. 실제 결과는
+        // executePipelined 가 명령 큐잉 순서대로 List<Object> 로 반환한다(SCARD→Long).
+        // SessionCallback 은 콜백 인자로 템플릿 자신을 넘겨줘 String 키를 그대로 쓸 수 있다
+        // (executePipelined(RedisCallback) 의 connection 은 프록시라 StringRedisConnection 캐스팅 불가).
+        List<Object> sizes = redis.executePipelined(new SessionCallback<Object>() {
+            @Override
+            public <K, V> Object execute(RedisOperations<K, V> operations) {
+                StringRedisTemplate ops = (StringRedisTemplate) operations; // 넘어오는 건 redis 템플릿 자신.
+                for (Long id : scheduleIds) {
+                    ops.opsForSet().size(key(id));
+                }
+                return null; // 파이프라인 규약: 콜백은 반드시 null 반환.
+            }
+        });
+        Map<Long, Long> result = new LinkedHashMap<>(scheduleIds.size());
+        for (int i = 0; i < scheduleIds.size(); i++) { // 결과는 큐잉 순서와 정렬 → index 로 scheduleId 매핑.
+            Object size = sizes.get(i);
+            result.put(scheduleIds.get(i), size == null ? 0L : (Long) size); // SCARD 는 미존재 키도 0.
+        }
+        return result;
     }
 
     @Override
