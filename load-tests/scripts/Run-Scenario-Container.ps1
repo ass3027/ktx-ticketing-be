@@ -43,6 +43,10 @@
     조회 SCARD 를 DB 트랜잭션 밖에서 수행할지(T4-5 ②). 'false'(기본·Before)=SCARD tx 안,
     'true'=tx 밖(커넥션이 Redis 왕복 미포함 → usage 단축). 컨테이너에 실제 주입됐는지 env 로 검증한다
     (효과는 actuator 아닌 부하 지표 usage/포화점으로 관측 — 커스텀 프로퍼티라 전용 미터가 없다).
+.PARAMETER Pipeline
+    조회 SCARD 를 파이프라인 1회 왕복으로 묶을지(T4-5 ③). 'false'(기본·Before)=직렬 N회,
+    'true'=배치 1회(RTT×N → RTT×1). ②와 독립 토글. 컨테이너에 실제 주입됐는지 env 로 검증한다
+    (커스텀 프로퍼티라 전용 미터 없음 — 효과는 부하 지표 조회 p95/포화점으로 관측).
 .PARAMETER Dashboard
     k6 web dashboard 를 켜고 시계열 차트를 HTML 로 export 한다(results/{prefix}_dashboard.html).
     soak(L6) 의 응답시간 우상향(누수) 판정처럼 시계열 추세가 필요한 시나리오에서 켠다.
@@ -65,6 +69,7 @@ param(
     [string]$ExpirySweepInterval = '2s',
     [int]$DbPoolSize = 10,
     [ValidateSet('true','false')][string]$RedisOutsideTx = 'false',
+    [ValidateSet('true','false')][string]$Pipeline = 'false',
     [switch]$PostRunCheck,
     [switch]$Build,
     [switch]$Dashboard
@@ -119,7 +124,10 @@ function Restart-App {
             # 커스텀 프로퍼티라 actuator 미터가 없어 env 로만 검증 — 효과는 부하 지표 usage 로 관측한다.
             $rtx = (docker compose exec -T app sh -c 'echo $BOOKING_QUERY_REDIS_OUTSIDE_TX' 2>$null).Trim()
             if ($rtx -ne $env:BOOKING_QUERY_REDIS_OUTSIDE_TX) { throw "redisOutsideTx 보장 실패: BOOKING_QUERY_REDIS_OUTSIDE_TX=$rtx (기대 $env:BOOKING_QUERY_REDIS_OUTSIDE_TX)" }
-            Write-Host "app healthy, admission=$adm, sweep(sideEffects=$se size=$bs interval=$si), hikariMax=$hikariMax, redisOutsideTx=$rtx" -ForegroundColor Green
+            # pipeline 토글도 컨테이너에 실제 주입됐는지 확인(T4-5 ③ off/on 이 옛 값으로 도는 측정 무효 방지).
+            $pl = (docker compose exec -T app sh -c 'echo $BOOKING_QUERY_PIPELINE' 2>$null).Trim()
+            if ($pl -ne $env:BOOKING_QUERY_PIPELINE) { throw "pipeline 보장 실패: BOOKING_QUERY_PIPELINE=$pl (기대 $env:BOOKING_QUERY_PIPELINE)" }
+            Write-Host "app healthy, admission=$adm, sweep(sideEffects=$se size=$bs interval=$si), hikariMax=$hikariMax, redisOutsideTx=$rtx, pipeline=$pl" -ForegroundColor Green
             return
         }
         Start-Sleep -Seconds 2
@@ -179,7 +187,9 @@ $env:BOOKING_EXPIRY_SWEEP_INTERVAL = $ExpirySweepInterval
 $env:DB_POOL_SIZE = "$DbPoolSize"
 # 조회 tx-밖 토글 주입(T4-5 ②). compose base 의 ${BOOKING_QUERY_REDIS_OUTSIDE_TX:-false} 가 받음.
 $env:BOOKING_QUERY_REDIS_OUTSIDE_TX = $RedisOutsideTx
-Write-Host "sweep 설정: batchSideEffects=$ExpiryBatchSideEffects batchSize=$ExpiryBatchSize interval=$ExpirySweepInterval, dbPool=$DbPoolSize, redisOutsideTx=$RedisOutsideTx" -ForegroundColor DarkCyan
+# 조회 pipeline 토글 주입(T4-5 ③). compose base 의 ${BOOKING_QUERY_PIPELINE:-false} 가 받음.
+$env:BOOKING_QUERY_PIPELINE = $Pipeline
+Write-Host "sweep 설정: batchSideEffects=$ExpiryBatchSideEffects batchSize=$ExpiryBatchSize interval=$ExpirySweepInterval, dbPool=$DbPoolSize, redisOutsideTx=$RedisOutsideTx, pipeline=$Pipeline" -ForegroundColor DarkCyan
 
 # k6 컨테이너 안의 시나리오 경로 (load-tests 가 /work/load-tests 로 마운트됨).
 $containerScenario = "/work/" + ($Scenario -replace '\\','/')
