@@ -23,15 +23,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * T4-5 ② tx-밖 토글의 <b>정합성·안전성</b> 통합 검증(실 MySQL/Redis). 단위 테스트가 못 잡는 두 가지를 본다:
+ * T4-5 ②(tx밖)·③(pipeline) 토글의 <b>정합성·안전성</b> 통합 검증(실 MySQL/Redis). 단위 테스트가 못 잡는 것:
  * <ol>
- *   <li><b>lazy 안전</b>: on(SCARD tx 밖)은 조회 트랜잭션이 끝난 detached 엔티티에서 {@code getTrain()} 을
+ *   <li><b>lazy 안전</b>: tx밖 경로(②-on)는 조회 트랜잭션이 끝난 detached 엔티티에서 {@code getTrain()} 을
  *       접근한다. {@code findPageAfter} 가 train 을 fetch join 하므로 {@code LazyInitializationException} 이
- *       나지 않아야 한다(open-in-view=false). — mock 으론 재현 불가.</li>
- *   <li><b>결과 등가</b>: on 과 off 가 동일 입력에 동일 응답(잔여석·매진·train 정보)을 낸다. ② 는 SCARD 의
- *       <i>위치</i>만 바꿀 뿐 값·판정은 불변이어야 한다.</li>
+ *       나지 않아야 한다(open-in-view=false). 직렬/배치(③) 매퍼 양쪽에서 안전해야 한다. — mock 으론 재현 불가.</li>
+ *   <li><b>결과 등가</b>: 4조합(②×③)이 동일 입력에 동일 응답(잔여석·매진·train)을 낸다. ②는 SCARD 의
+ *       <i>위치</i>, ③은 <i>묶는 방식(직렬/파이프라인)</i>만 바꿀 뿐 값·판정은 불변이어야 한다.</li>
  * </ol>
- * 각 토글은 프로퍼티 재기동 없이, 트랜잭션 reader 빈(프록시)을 그대로 주입한 서비스를 토글별로 조립해 확인한다.
+ * 각 토글은 프로퍼티 재기동 없이, 트랜잭션 reader 빈(프록시)을 그대로 주입한 서비스를 조합별로 조립해 확인한다.
  */
 class ScheduleQueryPathIntegrationTest extends AbstractIntegrationTest {
 
@@ -81,24 +81,28 @@ class ScheduleQueryPathIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("tx-밖(on)/tx-안(off) 토글이 동일 응답을 내고, on 은 detached 엔티티 train 접근이 안전하다")
-    void 토글_on_off가_동일_응답이고_tx밖_train접근이_안전() {
-        List<ScheduleResponse> off = search(false);
-        List<ScheduleResponse> on = search(true);
+    @DisplayName("②×③ 4조합이 동일 응답을 내고, tx밖·배치(pipeline) 경로도 detached train 접근이 안전하다")
+    void 토글_4조합이_동일_응답이고_tx밖_배치경로_train접근이_안전() {
+        // baseline(tx안·직렬)을 기준으로 나머지 3조합을 비교한다.
+        List<ScheduleResponse> baseline = search(false, false);
 
-        // on 경로는 tx 종료 후 getTrain() 접근 — 여기까지 예외 없이 왔다는 것 자체가 lazy 안전의 증거.
-        assertThat(on).singleElement().satisfies(item -> {
+        assertThat(baseline).singleElement().satisfies(item -> {
             assertThat(item.scheduleId()).isEqualTo(scheduleId);
-            assertThat(item.trainNumber()).isEqualTo(trainNumber); // detached train 이 초기화돼 있어야 값이 나온다
+            assertThat(item.trainNumber()).isEqualTo(trainNumber);
             assertThat(item.remainingSeats()).isEqualTo(3);
             assertThat(item.soldOut()).isFalse();
         });
-        // 위치만 바뀌었을 뿐 값·판정 불변 → 두 경로 응답이 완전히 같아야 한다(record equals).
-        assertThat(on).isEqualTo(off);
+
+        // ② 위치(tx안/밖) × ③ 묶는 방식(직렬/파이프라인) 어느 조합이든 값·판정 불변(record equals).
+        // tx밖(②-on) 조합은 tx 종료 후 getTrain() 접근 — 예외 없이 오는 것 자체가 lazy 안전의 증거이며,
+        // 그중 배치(③-on) 매퍼(toResponsesBatched)도 detached 엔티티에서 안전함을 함께 확인한다.
+        assertThat(search(false, true)).as("tx안·pipeline").isEqualTo(baseline);
+        assertThat(search(true, false)).as("tx밖·직렬").isEqualTo(baseline);
+        assertThat(search(true, true)).as("tx밖·pipeline").isEqualTo(baseline);
     }
 
-    private List<ScheduleResponse> search(boolean redisOutsideTx) {
-        var service = new ScheduleQueryService(reader, preemption, new QueryProperties(redisOutsideTx));
+    private List<ScheduleResponse> search(boolean redisOutsideTx, boolean pipeline) {
+        var service = new ScheduleQueryService(reader, preemption, new QueryProperties(redisOutsideTx, pipeline));
         return service.search(dep, arr, DEPART, null, 100).items();
     }
 }

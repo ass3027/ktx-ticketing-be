@@ -33,18 +33,33 @@ class ScheduleQueryReader {
     }
 
     /**
-     * ②-off(Before): 잔여석 SCARD 를 트랜잭션 <b>안</b>에서 직렬 수행 — 커넥션이 Redis 왕복 동안 점유된다.
-     * 이 점유시간(Hikari usage)이 ② 최적화의 Before 기준선이다.
+     * ②-off(Before): 잔여석 SCARD 를 트랜잭션 <b>안</b>에서 수행 — 커넥션이 Redis 왕복 동안 점유된다.
+     * 이 점유시간(Hikari usage)이 ② 최적화의 Before 기준선이다. {@code pipeline} 로 tx 안에서도 직렬(N왕복)/
+     * 배치(1왕복, ③)를 고른다 — A3(baseline 위 pipeline 단독)는 이 경로(tx안+pipeline)로 측정한다.
      */
     @Transactional(readOnly = true)
-    List<ScheduleResponse> fetchPageWithSeats(String dep, String arr, LocalDateTime from, long cursorId, int pageSize) {
-        return toResponses(fetchPage(dep, arr, from, cursorId, pageSize), preemption);
+    List<ScheduleResponse> fetchPageWithSeats(String dep, String arr, LocalDateTime from,
+                                              long cursorId, int pageSize, boolean pipeline) {
+        List<Schedule> page = fetchPage(dep, arr, from, cursorId, pageSize);
+        return pipeline ? toResponsesBatched(page, preemption) : toResponses(page, preemption);
     }
 
-    /** 페이지 엔티티 → 응답 DTO(잔여석은 avail: Set 크기 SCARD). 매핑 정의를 tx 안/밖 양쪽에서 공유. */
+    /** ③-off: 페이지 엔티티 → 응답 DTO(잔여석은 좌석별 SCARD 직렬 N회). 매핑을 tx 안/밖 양쪽에서 공유. */
     static List<ScheduleResponse> toResponses(List<Schedule> page, SeatPreemption preemption) {
         return page.stream()
                 .map(s -> ScheduleResponse.from(s, preemption.availableCount(s.getId())))
+                .toList();
+    }
+
+    /**
+     * ③-on: 페이지 전체 잔여석을 파이프라인 1회 왕복({@code availableCounts})으로 채운다(N RTT → 1 RTT).
+     * 값·매진 판정은 {@link #toResponses} 와 동일 — SCARD 를 <b>묶는 방식</b>만 다르다. tx 안/밖 양쪽 공유.
+     */
+    static List<ScheduleResponse> toResponsesBatched(List<Schedule> page, SeatPreemption preemption) {
+        List<Long> ids = page.stream().map(Schedule::getId).toList();
+        var counts = preemption.availableCounts(ids);
+        return page.stream()
+                .map(s -> ScheduleResponse.from(s, counts.getOrDefault(s.getId(), 0L)))
                 .toList();
     }
 }

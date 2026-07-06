@@ -11,10 +11,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -38,44 +40,47 @@ class ScheduleQueryServiceTest {
     @Mock ScheduleQueryReader reader;
     @Mock SeatPreemption preemption;
 
-    /** off=SCARD tx 안(fetchPageWithSeats), on=SCARD tx 밖(fetchPage + 서비스가 매핑). */
-    private ScheduleQueryService service(boolean redisOutsideTx) {
-        return new ScheduleQueryService(reader, preemption, new QueryProperties(redisOutsideTx));
+    /**
+     * 토글 2차원(②tx밖 × ③pipeline)으로 서비스를 조립한다. 커서 페이징 경계 테스트는 토글 무관이라
+     * 기본(off,off) 경로로만 검증한다.
+     */
+    private ScheduleQueryService service(boolean redisOutsideTx, boolean pipeline) {
+        return new ScheduleQueryService(reader, preemption, new QueryProperties(redisOutsideTx, pipeline));
     }
 
-    // --- 커서 페이징 경계 (토글 무관 — 기본 off 경로로 검증) ---
+    // --- 커서 페이징 경계 (토글 무관 — 기본 off/off 경로로 검증) ---
 
     @Test
     void limit_미지정시_기본값_8로_조회() {
-        service(false).search(DEP, ARR, FROM, null, null);
+        service(false, false).search(DEP, ARR, FROM, null, null);
 
         assertThat(capturedPageSize()).isEqualTo(8);
     }
 
     @Test
     void limit_상한_초과시_100으로_클램프() {
-        service(false).search(DEP, ARR, FROM, null, 999);
+        service(false, false).search(DEP, ARR, FROM, null, 999);
 
         assertThat(capturedPageSize()).isEqualTo(100);
     }
 
     @Test
     void limit_0이하시_1로_클램프() {
-        service(false).search(DEP, ARR, FROM, null, 0);
+        service(false, false).search(DEP, ARR, FROM, null, 0);
 
         assertThat(capturedPageSize()).isEqualTo(1);
     }
 
     @Test
     void afterId_미지정시_0으로_정규화해_첫_페이지_조회() {
-        service(false).search(DEP, ARR, FROM, null, 8);
+        service(false, false).search(DEP, ARR, FROM, null, 8);
 
         assertThat(capturedCursorId()).isZero();
     }
 
     @Test
     void afterId_지정시_그대로_위임() {
-        service(false).search(DEP, ARR, FROM, 42L, 8);
+        service(false, false).search(DEP, ARR, FROM, 42L, 8);
 
         assertThat(capturedCursorId()).isEqualTo(42L);
     }
@@ -86,7 +91,7 @@ class ScheduleQueryServiceTest {
         LocalDateTime lastTime = FROM.plusHours(2);
         stubWithSeats(List.of(resp(1L, FROM), resp(2L, FROM.plusHours(1)), resp(7L, lastTime)));
 
-        var result = service(false).search(DEP, ARR, FROM, null, limit);
+        var result = service(false, false).search(DEP, ARR, FROM, null, limit);
 
         assertThat(result.items()).hasSize(3);
         assertThat(result.nextCursor()).isNotNull();
@@ -98,7 +103,7 @@ class ScheduleQueryServiceTest {
     void 페이지가_덜_차면_nextCursor_없음_마지막_페이지() {
         stubWithSeats(List.of(resp(1L, FROM), resp(2L, FROM.plusHours(1))));
 
-        var result = service(false).search(DEP, ARR, FROM, null, 8);
+        var result = service(false, false).search(DEP, ARR, FROM, null, 8);
 
         assertThat(result.items()).hasSize(2);
         assertThat(result.nextCursor()).isNull();
@@ -108,19 +113,19 @@ class ScheduleQueryServiceTest {
     void 빈_결과면_빈_리스트와_nextCursor_없음() {
         stubWithSeats(List.of());
 
-        var result = service(false).search(DEP, ARR, FROM, null, 8);
+        var result = service(false, false).search(DEP, ARR, FROM, null, 8);
 
         assertThat(result.items()).isEmpty();
         assertThat(result.nextCursor()).isNull();
     }
 
-    // --- T4-5 ② 토글 라우팅 ---
+    // --- T4-5 ② tx밖 토글 라우팅 (pipeline off 고정) ---
 
     @Test
     void redisOutsideTx_off면_SCARD를_tx안에서_수행하는_경로로_위임() {
-        service(false).search(DEP, ARR, FROM, null, 8);
+        service(false, false).search(DEP, ARR, FROM, null, 8);
 
-        verify(reader).fetchPageWithSeats(eq(DEP), eq(ARR), eq(FROM), anyLong(), anyInt());
+        verify(reader).fetchPageWithSeats(eq(DEP), eq(ARR), eq(FROM), anyLong(), anyInt(), eq(false));
         verify(reader, never()).fetchPage(any(), any(), any(), anyLong(), anyInt());
     }
 
@@ -133,29 +138,54 @@ class ScheduleQueryServiceTest {
         when(preemption.availableCount(1L)).thenReturn(42L);
         when(preemption.availableCount(2L)).thenReturn(0L);
 
-        var result = service(true).search(DEP, ARR, FROM, null, 8);
+        var result = service(true, false).search(DEP, ARR, FROM, null, 8);
 
         assertThat(result.items())
                 .extracting(ScheduleResponse::scheduleId, ScheduleResponse::remainingSeats, ScheduleResponse::soldOut)
                 .containsExactly(tuple(1L, 42L, false), tuple(2L, 0L, true));
-        verify(reader, never()).fetchPageWithSeats(any(), any(), any(), anyLong(), anyInt());
+        verify(reader, never()).fetchPageWithSeats(any(), any(), any(), anyLong(), anyInt(), anyBoolean());
+    }
+
+    // --- T4-5 ③ pipeline 토글 라우팅 (② 두 경로 각각에서 독립 동작) ---
+
+    @Test
+    void pipeline_on_tx안이면_배치플래그_true로_reader에_위임() {
+        // tx안(②-off)의 직렬/배치 선택은 reader 내부라 서비스는 pipeline 플래그 전달만 책임진다.
+        service(false, true).search(DEP, ARR, FROM, null, 8);
+
+        verify(reader).fetchPageWithSeats(eq(DEP), eq(ARR), eq(FROM), anyLong(), anyInt(), eq(true));
+    }
+
+    @Test
+    void pipeline_on_tx밖이면_배치_availableCounts_1회로_잔여석을_채운다() {
+        List<Schedule> page = List.of(scheduleOf(1L, FROM), scheduleOf(2L, FROM.plusHours(1)));
+        when(reader.fetchPage(eq(DEP), eq(ARR), eq(FROM), anyLong(), anyInt())).thenReturn(page);
+        when(preemption.availableCounts(List.of(1L, 2L))).thenReturn(Map.of(1L, 42L, 2L, 0L));
+
+        var result = service(true, true).search(DEP, ARR, FROM, null, 8);
+
+        assertThat(result.items())
+                .extracting(ScheduleResponse::scheduleId, ScheduleResponse::remainingSeats, ScheduleResponse::soldOut)
+                .containsExactly(tuple(1L, 42L, false), tuple(2L, 0L, true));
+        // pipeline = 배치 1회. 직렬 availableCount 는 호출되면 안 된다(N왕복 회귀 방지).
+        verify(preemption, never()).availableCount(anyLong());
     }
 
     // --- helpers ---
 
     private void stubWithSeats(List<ScheduleResponse> items) {
-        when(reader.fetchPageWithSeats(any(), any(), any(), anyLong(), anyInt())).thenReturn(items);
+        when(reader.fetchPageWithSeats(any(), any(), any(), anyLong(), anyInt(), anyBoolean())).thenReturn(items);
     }
 
     private int capturedPageSize() {
         ArgumentCaptor<Integer> captor = ArgumentCaptor.forClass(Integer.class);
-        verify(reader).fetchPageWithSeats(any(), any(), any(), anyLong(), captor.capture());
+        verify(reader).fetchPageWithSeats(any(), any(), any(), anyLong(), captor.capture(), anyBoolean());
         return captor.getValue();
     }
 
     private long capturedCursorId() {
         ArgumentCaptor<Long> captor = ArgumentCaptor.forClass(Long.class);
-        verify(reader).fetchPageWithSeats(any(), any(), any(), captor.capture(), anyInt());
+        verify(reader).fetchPageWithSeats(any(), any(), any(), captor.capture(), anyInt(), anyBoolean());
         return captor.getValue();
     }
 

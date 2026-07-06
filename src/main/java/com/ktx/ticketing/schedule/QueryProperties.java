@@ -9,7 +9,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param redisOutsideTx ②: 잔여석 집계(SCARD)를 DB 트랜잭션 <b>밖</b>에서 수행할지 여부.
  *                       {@code true}=DB 커넥션이 Redis 왕복을 감싸지 않아 점유시간(Hikari usage) 단축,
  *                       {@code false}(기본/Before)=SCARD 를 tx 안에서 직렬 수행. 잔여석·매진 판정은 양쪽 동일.
+ * @param pipeline       ③: 페이지 편수(N)만큼의 SCARD 를 파이프라인 <b>1회 왕복</b>으로 묶을지 여부.
+ *                       {@code true}=RTT×N → RTT×1({@code availableCounts}), {@code false}(기본)=직렬 N회.
+ *                       ②와 독립 — tx 안/밖 어느 경로든 조합 가능(4조합). 잔여석·매진 판정은 불변.
  */
 @ConfigurationProperties(prefix = "booking.query")
-public record QueryProperties(boolean redisOutsideTx) {
+public record QueryProperties(boolean redisOutsideTx, boolean pipeline) {
 }

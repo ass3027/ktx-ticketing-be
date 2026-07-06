@@ -43,6 +43,9 @@ booking:
     # T4-5 ②: 잔여석 SCARD 를 DB 트랜잭션 밖에서 수행할지. 기본 false=Before(SCARD 가 tx 안 → 커넥션이
     # Redis 왕복 감쌈). env 로 재빌드 없이 flip 해 usage/포화점 변화 측정(① DB_POOL_SIZE 와 동일 패턴).
     redis-outside-tx: ${BOOKING_QUERY_REDIS_OUTSIDE_TX:false}
+    # T4-5 ③: 페이지 편수(N)만큼의 SCARD 를 파이프라인 1회 왕복으로 묶을지. 기본 false=직렬 N회(Before).
+    # env 로 재빌드 없이 flip 해 RTT 절감 효과 측정(②와 독립 — tx 안/밖 어느 경로든 조합 가능).
+    pipeline: ${BOOKING_QUERY_PIPELINE:false}
   admission:
     # 동시 활성 세션 상한 K — L5 임계점 탐색(T4-7)에서 역산·확정 전까지의 잠정값.
     max-active: 100

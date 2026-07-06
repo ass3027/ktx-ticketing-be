@@ -14,11 +14,14 @@ import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -40,18 +43,34 @@ class ScheduleQueryReaderTest {
     @InjectMocks ScheduleQueryReader reader;
 
     @Test
-    void fetchPageWithSeats_각_운행편_잔여석을_avail_Set_크기로_채우고_0이면_매진() {
+    void fetchPageWithSeats_직렬_각_운행편_잔여석을_avail_Set_크기로_채우고_0이면_매진() {
         Schedule a = scheduleOf(1L, FROM);
         Schedule b = scheduleOf(2L, FROM.plusHours(1));
         when(scheduleRepository.findPageAfter(any(), any(), any(), any(), any())).thenReturn(List.of(a, b));
         when(preemption.availableCount(1L)).thenReturn(7L);
         when(preemption.availableCount(2L)).thenReturn(0L);
 
-        List<ScheduleResponse> items = reader.fetchPageWithSeats(DEP, ARR, FROM, 0L, 8);
+        List<ScheduleResponse> items = reader.fetchPageWithSeats(DEP, ARR, FROM, 0L, 8, false);
 
         assertThat(items)
                 .extracting(ScheduleResponse::scheduleId, ScheduleResponse::remainingSeats, ScheduleResponse::soldOut)
                 .containsExactly(tuple(1L, 7L, false), tuple(2L, 0L, true));
+    }
+
+    @Test
+    void fetchPageWithSeats_pipeline이면_배치_availableCounts로_잔여석을_채우고_직렬은_호출안함() {
+        Schedule a = scheduleOf(1L, FROM);
+        Schedule b = scheduleOf(2L, FROM.plusHours(1));
+        when(scheduleRepository.findPageAfter(any(), any(), any(), any(), any())).thenReturn(List.of(a, b));
+        when(preemption.availableCounts(List.of(1L, 2L))).thenReturn(Map.of(1L, 7L, 2L, 0L));
+
+        List<ScheduleResponse> items = reader.fetchPageWithSeats(DEP, ARR, FROM, 0L, 8, true);
+
+        assertThat(items)
+                .extracting(ScheduleResponse::scheduleId, ScheduleResponse::remainingSeats, ScheduleResponse::soldOut)
+                .containsExactly(tuple(1L, 7L, false), tuple(2L, 0L, true));
+        // ③ pipeline = 배치 1회. 직렬 availableCount(N왕복)로 회귀하면 안 된다.
+        verify(preemption, never()).availableCount(anyLong());
     }
 
     @Test
