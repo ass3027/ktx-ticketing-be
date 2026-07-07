@@ -16,6 +16,10 @@ import java.util.List;
  * SCARD 를 직렬 N회/파이프라인 1회 중 무엇으로 묶을지(T4-5 ③)는 {@link QueryProperties#pipeline()} 로
  * 분기한다. 두 토글은 독립이라 4조합 모두 동작한다(값·매진 판정은 조합 불변).
  *
+ * <p>그 위에 조회 단기 캐시(T4-5 ④ = E3)를 {@link QueryCacheProperties#enabled()} 로 감싼다 — on 이면
+ * DB/SCARD 컴퓨트({@link #computeUncached})를 {@link ScheduleListCache} 히트로 대체한다. 미스 경로는
+ * ②③ 조합을 그대로 타므로(C4 자연 합성) 세 토글이 한 코드에서 조립된다.
+ *
  * <p>자신은 {@code @Transactional} 을 걸지 <b>않는다</b> — 토글에 따라 tx 경계(DB 조회만)와 SCARD 를
  * 분리해야 하는데, 프록시 기반 {@code @Transactional} 은 런타임에 켜고 끌 수 없기 때문이다.
  */
@@ -31,16 +35,37 @@ public class ScheduleQueryService {
     private final ScheduleQueryReader reader;
     private final SeatPreemption preemption;
     private final QueryProperties queryProperties;
+    private final QueryCacheProperties cacheProperties;
+    private final ScheduleListCache cache;
 
     public ScheduleListResponse search(String dep, String arr, LocalDateTime from,
                                        @Nullable Long afterId, @Nullable Integer limit) {
         int pageSize = clampLimit(limit);
         long cursorId = (afterId != null) ? afterId : FIRST_PAGE_AFTER_ID;
 
+        // ④-on: 정규화된 커서/페이지로 캐시 키를 잡고, 미스 시에만 ②③ 컴퓨트를 loader 로 넘긴다.
+        if (cacheProperties.enabled()) {
+            String key = cacheKey(dep, arr, from, cursorId, pageSize);
+            return cache.getOrLoad(key, () -> computeUncached(dep, arr, from, cursorId, pageSize));
+        }
+        return computeUncached(dep, arr, from, cursorId, pageSize);
+    }
+
+    /** ④-off(캐시 미스 loader): ②③ 조합으로 DB 페이지+잔여석을 직접 집계해 응답을 조립한다. */
+    private ScheduleListResponse computeUncached(String dep, String arr, LocalDateTime from,
+                                                 long cursorId, int pageSize) {
         List<ScheduleResponse> items = queryProperties.redisOutsideTx()
                 ? searchRedisOutsideTx(dep, arr, from, cursorId, pageSize)
                 : reader.fetchPageWithSeats(dep, arr, from, cursorId, pageSize, queryProperties.pipeline());
         return new ScheduleListResponse(items, nextCursor(items, pageSize));
+    }
+
+    /**
+     * 캐시 키. 응답을 결정하는 입력 전부(노선·시각 하한·정규화 커서·페이지 크기)를 담는다 — {@code from} 은
+     * 첫 페이지 하한, 이후 페이지는 {@code cursorId} 로 위치가 정해지므로 두 값이 함께 응답을 고정한다.
+     */
+    private static String cacheKey(String dep, String arr, LocalDateTime from, long cursorId, int pageSize) {
+        return "qcache:list:" + dep + ':' + arr + ':' + from + ':' + cursorId + ':' + pageSize;
     }
 
     /**

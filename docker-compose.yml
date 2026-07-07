@@ -34,6 +34,9 @@ services:
       # 조회 SCARD 를 파이프라인 1회 왕복으로 묶을지 — T4-5 ③ 측정용 env 토글(기본 false=Before, 직렬 N회).
       # true 로 두면 RTT×N → RTT×1. ②와 독립 토글. 재빌드 없이 flip.
       BOOKING_QUERY_PIPELINE: ${BOOKING_QUERY_PIPELINE:-false}
+      # 조회 단기 캐시 on/off — T4-5 ④(=E3) 측정용 env 토글(기본 false=Before). true=cache on(A4/C4).
+      # 히트 시 DB/SCARD 소거. 재빌드 없이 flip 해 E3 Before/After 대조.
+      BOOKING_QUERY_CACHE_ENABLED: ${BOOKING_QUERY_CACHE_ENABLED:-false}
     # AOT 캐시 영속화 — 컨테이너 재생성(force-recreate)에도 보존해 재 dump(~10s) 회피.
     # entrypoint 가 jar 변경 시 자동 무효화하므로 코드 변경 시엔 재 dump 된다.
     volumes:

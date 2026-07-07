@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -37,6 +38,7 @@ class ScheduleQueryPathIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired ScheduleQueryReader reader;
     @Autowired SeatPreemption preemption;
+    @Autowired ScheduleListCache listCache;
     @Autowired SeatInventoryRepository seatInventoryRepository;
     @Autowired EntityManager em;
     @Autowired TransactionTemplate tx;
@@ -102,7 +104,9 @@ class ScheduleQueryPathIntegrationTest extends AbstractIntegrationTest {
     }
 
     private List<ScheduleResponse> search(boolean redisOutsideTx, boolean pipeline) {
-        var service = new ScheduleQueryService(reader, preemption, new QueryProperties(redisOutsideTx, pipeline));
+        // ④ 캐시 disabled — 이 조합 등가 테스트의 관심은 ②③ 라우팅이다(캐시 on≡off 는 아래 별도 테스트).
+        var service = new ScheduleQueryService(reader, preemption, new QueryProperties(redisOutsideTx, pipeline),
+                new QueryCacheProperties(false, Duration.ofSeconds(1)), listCache);
         return service.search(dep, arr, DEPART, null, 100).items();
     }
 }

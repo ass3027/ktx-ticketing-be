@@ -46,6 +46,12 @@ booking:
     # T4-5 ③: 페이지 편수(N)만큼의 SCARD 를 파이프라인 1회 왕복으로 묶을지. 기본 false=직렬 N회(Before).
     # env 로 재빌드 없이 flip 해 RTT 절감 효과 측정(②와 독립 — tx 안/밖 어느 경로든 조합 가능).
     pipeline: ${BOOKING_QUERY_PIPELINE:false}
+  query-cache:
+    # T4-5 ④(=E3): 리스트+잔여석을 Redis 공유 캐시에 짧은 TTL 로 담아 히트 시 DB/SCARD 소거.
+    # 기본 false=Before(cache off). env flip=E3 after(A4/C4). single-flight 로 만료 순간 stampede 방어.
+    enabled: ${BOOKING_QUERY_CACHE_ENABLED:false}
+    # staleness 상한. 2-tier 계약(표시 staleness ≤ ~2s) 아래 여유로 기본 1s. 오버셀과 무관(예매는 캐시 미접촉).
+    ttl: ${BOOKING_QUERY_CACHE_TTL:1s}
   admission:
     # 동시 활성 세션 상한 K — L5 임계점 탐색(T4-7)에서 역산·확정 전까지의 잠정값.
     max-active: 100

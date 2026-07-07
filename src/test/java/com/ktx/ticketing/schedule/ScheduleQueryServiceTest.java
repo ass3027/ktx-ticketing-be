@@ -9,6 +9,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -42,10 +43,13 @@ class ScheduleQueryServiceTest {
 
     /**
      * 토글 2차원(②tx밖 × ③pipeline)으로 서비스를 조립한다. 커서 페이징 경계 테스트는 토글 무관이라
-     * 기본(off,off) 경로로만 검증한다.
+     * 기본(off,off) 경로로만 검증한다. ④ 캐시는 <b>disabled</b> 로 고정 — 이 테스트의 관심은 ②③ 컴퓨트
+     * 라우팅이라, 캐시 켜짐은 별도 {@link ScheduleListCacheTest} 가 본다. disabled 면 서비스가 cache 를
+     * 아예 호출하지 않으므로 mock 만 주입해도 안전하다.
      */
     private ScheduleQueryService service(boolean redisOutsideTx, boolean pipeline) {
-        return new ScheduleQueryService(reader, preemption, new QueryProperties(redisOutsideTx, pipeline));
+        return new ScheduleQueryService(reader, preemption, new QueryProperties(redisOutsideTx, pipeline),
+                new QueryCacheProperties(false, Duration.ofSeconds(1)), mock(ScheduleListCache.class));
     }
 
     // --- 커서 페이징 경계 (토글 무관 — 기본 off/off 경로로 검증) ---
