@@ -1,7 +1,5 @@
 package com.ktx.ticketing.schedule;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ktx.ticketing.infra.DistributedLock;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.Nullable;
@@ -10,6 +8,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+
+import java.time.Duration;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 
 /**
@@ -71,7 +74,7 @@ public class ScheduleListCache {
         }
         try {
             return objectMapper.readValue(json, ScheduleListResponse.class);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             log.warn("조회 캐시 역직렬화 실패, 캐시 우회: key={}", key, e);
             return null;
         }
@@ -79,9 +82,22 @@ public class ScheduleListCache {
 
     private void put(String key, ScheduleListResponse value) {
         try {
-            redis.opsForValue().set(key, objectMapper.writeValueAsString(value), properties.ttl());
-        } catch (JsonProcessingException e) {
+            redis.opsForValue().set(key, objectMapper.writeValueAsString(value), jitteredTtl());
+        } catch (JacksonException e) {
             log.warn("조회 캐시 직렬화 실패, SET 생략: key={}", key, e);
         }
+    }
+
+    /**
+     * TTL 에 지터를 적용한 실제 만료 시간. ratio=0(기본)이면 고정 ttl 그대로. ratio&gt;0 이면 {@code ttl}
+     * 을 {@code [1-ratio, 1+ratio]} 배로 무작위 스케일 → 다중 키 동시 만료를 시간축에 분산(DB 파도 완화).
+     */
+    private Duration jitteredTtl() {
+        double ratio = properties.ttlJitterRatio();
+        if (ratio <= 0) {
+            return properties.ttl();
+        }
+        double scale = 1.0 + ThreadLocalRandom.current().nextDouble(-ratio, ratio);
+        return Duration.ofMillis(Math.max(1, (long) (properties.ttl().toMillis() * scale)));
     }
 }
