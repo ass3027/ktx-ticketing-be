@@ -44,7 +44,7 @@ P6 산출물(README·그래프)이 이 수치에 의존하므로, 여기서 못 
 ## 5. 주간 DoD (Definition of Week-done)
 
 - [x] T4-5 ③ pipeline 결론 (N≈8 에선 레버 아님 — 효과크기 논증으로 측정 갈음)
-- [ ] T4-5 ④ 조회 캐시 측정 완료 (= E3 after 확보)
+- [x] T4-5 ④ 조회 캐시 측정 완료 (= E3 after 확보) — A4/C4 단일 핫키 SLO 통과 + 다중 키 한계·jitter 규명
 - [ ] T4-7 L5 임계점 → K 확정 + 입장 제어 반영
 - [ ] T4-9 E1·E2 Before/After + 그래프
 - [ ] `P4_Result.md` 정리 + 체크리스트 T4-5·T4-7·T4-9 `[x]` → **M4 완결**

@@ -278,6 +278,15 @@ public StringRedisTemplate stringRedisTemplate(LettuceConnectionFactory factory)
   SREM=0 으로 자동 실패 → self-correct(2-tier 계약 내). README C6 트레이드오프: 로컬 대신 공유(일관성) +
   single-flight(stampede 방어).
 
+> **측정 후 추가(2026-07-07) — TTL jitter(`ttlJitterRatio`)**: 단일 핫키(A4/C4)에선 캐시가 완벽했으나,
+> **다중 키(키 50개·히트율~98%)에서 여러 키가 동시에 채워져 동시에 만료 → 만료 순간 미스가 뭉쳐 DB 파도
+> → p95 스파이크**(5회 재현, 최악 525ms). single-flight 는 키별 재계산을 1회로 막지만 키가 50개면 동시
+> 50 컴퓨트가 풀을 순간 점유한다. 완화책으로 TTL 을 `[1−ratio, 1+ratio]` 배 무작위 스케일(`put()`)해 만료를
+> 시간축에 분산 → **최악 p95 절반(525→265ms). 다만 SLO 200ms 는 여전 초과** — jitter 는 만료 뭉침만 흩을
+> 뿐 미스 총량은 불변이라, 다중 키의 근본(미스 시 DB 풀 경유)은 안 바뀐다. **결론: 캐시는 히트율 의존** —
+> 핫키(실 KTX 인기 노선)엔 강하나 낮은 히트율엔 DB 풀이 병목으로 복귀. jitter 는 무해 상시 옵션(기본 0,
+> env `BOOKING_QUERY_CACHE_TTL_JITTER`). 낮은 히트율 대응(②결합·pool↑·DB 인덱싱)은 운영점 밖 후속 과제.
+
 ---
 
 ## 4. 실험 설계 — 독립 + 누적 (둘 다)
@@ -362,4 +371,6 @@ public StringRedisTemplate stringRedisTemplate(LettuceConnectionFactory factory)
 | 2026-07-04 | ③ 구현 | `SeatPreemption.availableCounts` 배치(SCARD pipeline) + 조회 경로 토글(`booking.query.pipeline`, ②와 독립 2×2). `executePipelined` 는 SessionCallback 사용(RedisCallback 의 connection 은 프록시라 StringRedisConnection 캐스팅 불가). 단위 + 실 Redis 통합테스트(순서보존·직렬등가·빈입력) green | ✅ |
 | 2026-07-06 | ③ 결론(측정 갈음) | **측정 안 함 — 효과크기 논증으로 갈음.** pipeline 절감=RTT×(N−1). 실운영 N≈8(`DEFAULT_LIMIT`)에선 ~7RTT≈**~1.4ms** = 회차 간 노이즈·측정 바닥 이하 → **N≈8 에선 조회 p95/포화점 레버 아님**. N 을 50(시드 상한)으로 부풀리면 ~10ms 로 겨우 가시하나 **운영점(N≈8±2)이 아니라 measurement theater** → 기각. 코드는 대용량 페이지 안전용으로 유지(무해, N↑ 시 자동 이득). 남은 격차 실질 레버=④(캐시=E3, 왕복을 줄이는 ③이 아니라 없애는 ④). 결과: P4_Result.md T4-5 ③ | ✅ |
 | 2026-07-06 | ④ 계획 개정 | 캐시 기술을 **Redis 공유 + single-flight** 로 확정(§3.5). 로컬(Caffeine)은 멀티 인스턴스에서 표시 불일치 → 잠긴 2-tier("served from Redis short-TTL cache")와 정합하게 공유 선택. 히트=GET 1왕복(0 아님)이나 DB 풀 병목은 tx밖 GET 이라 그대로 제거. stampede 는 기존 `DistributedLock` double-check single-flight 로 DB 재계산 1회 보장. | 📝 계획 |
-| | ④ 조회 단기 캐시(=E3 after) 토글·측정 | | ⏳ |
+| 2026-07-07 | ④ 구현 | `QueryCacheProperties`(enabled·ttl·ttlJitterRatio) + `ScheduleListCache`(single-flight double-check). Jackson 3(`tools.jackson.databind`) — Spring Boot 4.0 기본 ObjectMapper 가 3.x 라 2.x 아닌 3 로 작성(예외=unchecked `JacksonException`). 서비스에 `computeUncached` 추출 + 캐시 분기. 단위 6(히트/loser/winner/락null/degrade/지터) + 통합(on≡off 등가·round-trip). 전체 test 그린(oversell 0 포함). | ✅ |
+| 2026-07-07 | ④ 측정 A4·C4(=E3 after) | **단일 핫키(키 1개·히트율~100%).** A4(baseline 위 cache off↔on): 850→**2,497 TPS**·p95 8s→**26ms**·dropped 44만→**0** = SLO 통과(포화 해소). C4(②tx밖 위): cache on 2,498≈A4 → **캐시 켜지면 ①②③ 잉여**(A4≈C4, ②가 ①을 잉여로 만든 것의 연장). 3회 일관. 결과: P4_Result.md T4-5 ④ | ✅ |
+| 2026-07-07 | ④ 한계 규명 다중 키(L3b) | `from` 50일 분산(키 50개·히트율~98%)으로 낮은 히트율 실측. **고정 TTL: 동시 만료 스파이크 재현(5회)** — p95 31~525ms 요동·max 초단위·dropped 발생(단일키는 22~32ms 타이트). single-flight 는 키별 1회 막지만 키 50개라 동시 50 컴퓨트가 풀 점유. **TTL jitter 0.2: 부분 완화**(최악 p95 525→265ms, 그러나 SLO 200ms 초과 유지) — jitter 는 만료 뭉침만 흩을 뿐 미스 총량은 불변. 결론: **캐시는 히트율 의존**(핫키 강·낮은 히트율선 DB 풀 병목 복귀). jitter 는 무해 상시 옵션(기본 0). 결과: P4_Result.md T4-5 ④ 한계 | ✅ |
