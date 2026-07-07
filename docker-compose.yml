@@ -37,6 +37,8 @@ services:
       # 조회 단기 캐시 on/off — T4-5 ④(=E3) 측정용 env 토글(기본 false=Before). true=cache on(A4/C4).
       # 히트 시 DB/SCARD 소거. 재빌드 없이 flip 해 E3 Before/After 대조.
       BOOKING_QUERY_CACHE_ENABLED: ${BOOKING_QUERY_CACHE_ENABLED:-false}
+      # TTL 지터 폭(0~1) — 다중 키 동시 만료 스파이크 완화(T4-5 ④). 기본 0=고정 TTL. 재빌드 없이 flip.
+      BOOKING_QUERY_CACHE_TTL_JITTER: ${BOOKING_QUERY_CACHE_TTL_JITTER:-0}
     # AOT 캐시 영속화 — 컨테이너 재생성(force-recreate)에도 보존해 재 dump(~10s) 회피.
     # entrypoint 가 jar 변경 시 자동 무효화하므로 코드 변경 시엔 재 dump 된다.
     volumes:

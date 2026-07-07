@@ -52,6 +52,9 @@ booking:
     enabled: ${BOOKING_QUERY_CACHE_ENABLED:false}
     # staleness 상한. 2-tier 계약(표시 staleness ≤ ~2s) 아래 여유로 기본 1s. 오버셀과 무관(예매는 캐시 미접촉).
     ttl: ${BOOKING_QUERY_CACHE_TTL:1s}
+    # TTL 만료 지터 폭(0~1). 다중 키 동시 만료 → DB 파도(p95 스파이크) 완화용. 기본 0=고정 TTL(Before).
+    # env flip 해 다중 키 스파이크 Before/After 대조(A4 는 단일 핫키라 무영향).
+    ttl-jitter-ratio: ${BOOKING_QUERY_CACHE_TTL_JITTER:0}
   admission:
     # 동시 활성 세션 상한 K — L5 임계점 탐색(T4-7)에서 역산·확정 전까지의 잠정값.
     max-active: 100
