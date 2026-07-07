@@ -49,7 +49,7 @@ class ScheduleQueryServiceTest {
      */
     private ScheduleQueryService service(boolean redisOutsideTx, boolean pipeline) {
         return new ScheduleQueryService(reader, preemption, new QueryProperties(redisOutsideTx, pipeline),
-                new QueryCacheProperties(false, Duration.ofSeconds(1)), mock(ScheduleListCache.class));
+                new QueryCacheProperties(false, Duration.ofSeconds(1), 0), mock(ScheduleListCache.class));
     }
 
     // --- 커서 페이징 경계 (토글 무관 — 기본 off/off 경로로 검증) ---

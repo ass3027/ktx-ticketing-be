@@ -80,6 +80,7 @@ class ScheduleQueryPathIntegrationTest extends AbstractIntegrationTest {
     void cleanup() {
         redis.delete("avail:" + scheduleId);
         redis.delete("preempt:ts:" + scheduleId);
+        redis.delete("qcache:list:" + dep + ':' + arr + ':' + DEPART + ":0:100");
     }
 
     @Test
@@ -103,10 +104,33 @@ class ScheduleQueryPathIntegrationTest extends AbstractIntegrationTest {
         assertThat(search(true, true)).as("tx밖·pipeline").isEqualTo(baseline);
     }
 
+    @Test
+    @DisplayName("④ 캐시 on 이 off 와 동일 응답을 내고, 미스 후 캐시 키가 실제로 채워진다")
+    void 캐시_on이_off와_동일_응답이고_미스후_키가_채워진다() {
+        // 기준 = 캐시 off(②③도 off)의 실 컴퓨트 결과.
+        ScheduleListResponse expected = service(false, false, false).search(dep, arr, DEPART, null, 100);
+
+        var cachedService = service(true, false, false); // ④-on(②③ off)
+        // 1차 호출: 미스 → 컴퓨트 → SET. 응답은 off 와 등가여야 한다.
+        ScheduleListResponse first = cachedService.search(dep, arr, DEPART, null, 100);
+        assertThat(first).as("캐시 미스 컴퓨트 응답 = off 등가").isEqualTo(expected);
+
+        // 미스 후 캐시 키가 실제로 채워졌는지(히트 경로가 성립하는지) 직접 확인.
+        String key = "qcache:list:" + dep + ':' + arr + ':' + DEPART + ":0:100";
+        assertThat(redis.hasKey(key)).as("미스 후 캐시 SET").isTrue();
+
+        // 2차 호출: 히트 → 저장된 JSON 역직렬화. 값·매진·train 이 여전히 등가여야 한다(round-trip 정합).
+        ScheduleListResponse second = cachedService.search(dep, arr, DEPART, null, 100);
+        assertThat(second).as("캐시 히트 응답 = off 등가").isEqualTo(expected);
+    }
+
+    private ScheduleQueryService service(boolean cacheEnabled, boolean redisOutsideTx, boolean pipeline) {
+        return new ScheduleQueryService(reader, preemption, new QueryProperties(redisOutsideTx, pipeline),
+                new QueryCacheProperties(cacheEnabled, Duration.ofSeconds(2), 0), listCache);
+    }
+
     private List<ScheduleResponse> search(boolean redisOutsideTx, boolean pipeline) {
-        // ④ 캐시 disabled — 이 조합 등가 테스트의 관심은 ②③ 라우팅이다(캐시 on≡off 는 아래 별도 테스트).
-        var service = new ScheduleQueryService(reader, preemption, new QueryProperties(redisOutsideTx, pipeline),
-                new QueryCacheProperties(false, Duration.ofSeconds(1)), listCache);
-        return service.search(dep, arr, DEPART, null, 100).items();
+        // ④ 캐시 disabled — 이 조합 등가 테스트의 관심은 ②③ 라우팅이다(캐시 on≡off 는 위 별도 테스트).
+        return service(false, redisOutsideTx, pipeline).search(dep, arr, DEPART, null, 100).items();
     }
 }
