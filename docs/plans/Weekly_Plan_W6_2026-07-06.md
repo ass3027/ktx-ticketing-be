@@ -11,14 +11,14 @@
 E1·E2·E3 Before/After + 활성자 상한 K 확정 + 그래프까지 `P4_Result.md`에 확보한다.
 P6 산출물(README·그래프)이 이 수치에 의존하므로, 여기서 못 닫으면 W7 제출(M5·07/19)이 흔들린다.
 
-> **★현재 primary 작업 = T4-7 (활성자 상한 K).** L5 1·2차 측정 완주 → 병목이 예매 write 경로임을
-> 규명 → **예매 경로 격리 재측정으로 재정향**. 다음 액션 = `L5b_booking_breakpoint.js` 작성(계획 승인됨)
-> → 사용자 측정 → K 역산. 정본 진행 상태·방법론: `Admission_K_Calibration_Plan.md` §8 + 진행 로그.
+> **★현재 primary 작업 = T4-9 (E1·E2).** T4-5 ③④·T4-7 완료. **T4-7 결과(2026-07-10)**: L5b 예매경로
+> 격리 측정으로 **K=100(스케줄당) 확정** — safe_TPS≈150 × W≈0.9s × 마진0.75 ≈ 100(잠정값과 수렴).
+> 오버셀 0. 전역 K 는 후속(T4-14). 정본: `Admission_K_Calibration_Plan.md` §9 + `P4_Result.md` T4-7.
 
 ## 1. 진입 좌표 (2026-07-06 기준)
 
-- 전체 진행률 62% (33/53). P0~P3(M1·M2·M3) 완료.
-- **P4 성능 측정 42%**(5/12) — 진행 중.
+- 전체 진행률 63% (34/54). P0~P3(M1·M2·M3) 완료.
+- **P4 성능 측정 46%**(6/13) — 진행 중. T4-5·T4-7 완료, 남은 Must = T4-9(E1·E2).
 - 원 일정상 W6(07/06~12)=P4 마무리 → **M4(07/07)**, W7(07/13~19)=P6 → **M5 제출(07/19)**.
 - 결정(2026-07-06): 이번 주 범위 = **P4 핵심만 닫기**(스트레치 실험 제외), 가용 시간 = **주 15h 안팎**.
 
@@ -28,8 +28,8 @@ P6 산출물(README·그래프)이 이 수치에 의존하므로, 여기서 못 
 |:-:|------|------|:---:|------|
 | 1 | 월~화 | ✅ **T4-5 ③ pipeline** — 구현+테스트 완료. **측정은 효과크기 논증으로 갈음**: N≈8 운영점에선 ~1.4ms=노이즈 이하 → 레버 아님(N 부풀린 측정=theater 로 기각). 코드는 대용량 페이지 안전용 유지 | Should | ~~A3·C3 측정~~ → 운영 N 에서 효과 바닥 이하 논증(P4_Result.md T4-5 ③) |
 | 2 | 수 | **T4-5 ④ 조회 캐시** — **Redis 공유 + single-flight**(`booking.query-cache.enabled`, TTL≤2s) 구현 + A4·C4 측정. 로컬 아닌 공유(멀티 인스턴스 일관, 잠긴 2-tier 정합), stampede 는 `DistributedLock` double-check. 설계 §3.5 | Should | 매진 보수성·오버셀 0 유지. **E3 after 확보**(= T4-9 E3 자동 완료) |
-| 3 | 목 | **★진행 중(primary) — T4-7 L5 임계점** 탐색 → **활성자 상한 K 역산·확정** → 입장 제어 소급 반영. **재정향: 예매 경로 격리 재측정**(`L5b_booking_breakpoint.js`) — L5 1·2차서 병목=예매 write 경로 규명, admission 은 예매 경로만 게이트하므로 list 노이즈 빼고 측정. 정본: `Admission_K_Calibration_Plan.md` §8 | **Must** | K 결정값 + 근거 수치, `booking.admission.max-active` 반영 |
-| 4 | 금 | **T4-9 E1·E2** — E1(락 on/off → oversell 사라짐)·E2(입장 on/off) Before/After + 그래프 | **Must** | E1: 락 off 시 oversell>0 재현 / E2: 초과 흡수 대조 |
+| 3 | 목 | ✅ **T4-7 L5 임계점 → 활성자 상한 K 확정.** 예매 경로 격리 재측정(`L5b_booking_breakpoint.js`)으로 **K=100(스케줄당) 확정**: safe_TPS≈150 × W≈0.9s × 마진0.75 ≈ 100(잠정값과 수렴). 오버셀 0. 전역 K 는 후속(T4-14). 정본: `Admission_K_Calibration_Plan.md` §9 | **Must** | ✅ K 결정값 + 근거 수치, `booking.admission.max-active` 근거 확정 |
+| 4 | 금 | **★진행 중(primary) — T4-9 E1·E2** — E1(락 on/off → oversell 사라짐)·E2(입장 on/off) Before/After + 그래프 | **Must** | E1: 락 off 시 oversell>0 재현 / E2: 초과 흡수 대조 |
 | 5 | 버퍼(주말) | `P4_Result.md` 정리 + Grafana 그래프 캡처 + 체크리스트 `[x]` 처리 | — | T4-5·T4-7·T4-9 완료 → **M4 완결** |
 
 > 이번 주 완료 시 P4 = 12개 중 9개(75%). 남는 3개(T4-10/11/12 스트레치 실험)는 W7 이후 버퍼로 이월.
@@ -49,6 +49,6 @@ P6 산출물(README·그래프)이 이 수치에 의존하므로, 여기서 못 
 
 - [x] T4-5 ③ pipeline 결론 (N≈8 에선 레버 아님 — 효과크기 논증으로 측정 갈음)
 - [x] T4-5 ④ 조회 캐시 측정 완료 (= E3 after 확보) — A4/C4 단일 핫키 SLO 통과 + 다중 키 한계·jitter 규명
-- [ ] T4-7 L5 임계점 → K 확정 + 입장 제어 반영
+- [x] T4-7 L5 임계점 → K=100(스케줄당) 확정 + `application.yml`·`AdmissionProperties` 근거 반영 (전역 K는 T4-14 후속)
 - [ ] T4-9 E1·E2 Before/After + 그래프
 - [ ] `P4_Result.md` 정리 + 체크리스트 T4-5·T4-7·T4-9 `[x]` → **M4 완결**
