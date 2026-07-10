@@ -57,6 +57,8 @@
 .PARAMETER Limit
     조회 페이지 크기(k6 __ENV.LIMIT = 요청당 SCARD N). 기본 0=미주입(서버 기본 8). T4-5 ③ pipeline 은
     N 이 클수록 효과가 커지므로 50 등으로 키워 효과크기를 가시화한다(시드 상한 50).
+.PARAMETER SeatHoldSeconds
+    L5b 예매 후 좌석 점유 시간(k6 __ENV.SEAT_HOLD_SECONDS). 기본 1. Little's law 의 W 민감도 측정용.
 .PARAMETER Dashboard
     k6 web dashboard 를 켜고 시계열 차트를 HTML 로 export 한다(results/{prefix}_dashboard.html).
     soak(L6) 의 응답시간 우상향(누수) 판정처럼 시계열 추세가 필요한 시나리오에서 켠다.
@@ -84,6 +86,7 @@ param(
     [string]$TtlJitter = '0',
     [string]$Hold = '3m',
     [int]$Limit = 0,
+    [int]$SeatHoldSeconds = 1,
     [switch]$PostRunCheck,
     [switch]$Build,
     [switch]$Dashboard
@@ -215,9 +218,9 @@ $env:BOOKING_QUERY_CACHE_ENABLED = $CacheEnabled
 # TTL 지터 주입(T4-5 ④). compose base 의 ${BOOKING_QUERY_CACHE_TTL_JITTER:-0} 가 받음.
 $env:BOOKING_QUERY_CACHE_TTL_JITTER = $TtlJitter
 # 시나리오별 k6 __ENV 주입(HOLD/LIMIT). Limit=0 이면 미주입 → 시나리오가 서버 기본(8)을 씀.
-$scenarioEnv = @('-e', "HOLD=$Hold")
+$scenarioEnv = @('-e', "HOLD=$Hold", '-e', "SEAT_HOLD_SECONDS=$SeatHoldSeconds")
 if ($Limit -gt 0) { $scenarioEnv += @('-e', "LIMIT=$Limit") }
-Write-Host "sweep 설정: batchSideEffects=$ExpiryBatchSideEffects batchSize=$ExpiryBatchSize interval=$ExpirySweepInterval, dbPool=$DbPoolSize, redisOutsideTx=$RedisOutsideTx, pipeline=$Pipeline, cacheEnabled=$CacheEnabled, ttlJitter=$TtlJitter, hold=$Hold, limit=$Limit" -ForegroundColor DarkCyan
+Write-Host "sweep 설정: batchSideEffects=$ExpiryBatchSideEffects batchSize=$ExpiryBatchSize interval=$ExpirySweepInterval, dbPool=$DbPoolSize, redisOutsideTx=$RedisOutsideTx, pipeline=$Pipeline, cacheEnabled=$CacheEnabled, ttlJitter=$TtlJitter, hold=$Hold, limit=$Limit, seatHoldSeconds=$SeatHoldSeconds" -ForegroundColor DarkCyan
 
 # k6 컨테이너 안의 시나리오 경로 (load-tests 가 /work/load-tests 로 마운트됨).
 $containerScenario = "/work/" + ($Scenario -replace '\\','/')

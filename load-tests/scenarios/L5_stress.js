@@ -70,8 +70,12 @@ export const options = {
                 { duration: '3m',  target: 4000 },
                 { duration: '30s', target: 0    },
             ],
-            preAllocatedVUs: 2000,
-            maxVUs: 8000, // 1초 점유 + 지연 상승 시 도착률 유지를 위해 크게 — 결국 한계에 닿으면 dropped 로 드러남
+            // 필요 VU ≈ 도착률 × iteration시간. iteration ≈ 0.6×list(~50ms) + 0.4×예매(hold 1s+왕복)
+            // ≈ 0.47s → 4k TPS 엔 ~1,900 VU. 지연 상승분 여유로 상한 4,000(필요의 2배)면 충분하다.
+            // 8,000 은 과다 — k6 가 VM 메모리를 불필요하게 2배 잡아 4GB VM 을 OOM 시켰다(T4-7 실측).
+            // 상한 초과분은 dropped_iterations 로 정직하게 드러나 오히려 임계점 신호가 된다.
+            preAllocatedVUs: 2500,
+            maxVUs: 4000,
         },
     },
     thresholds: {
