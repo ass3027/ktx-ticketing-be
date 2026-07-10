@@ -17,7 +17,7 @@
 | T4-4 L2/L2b 정상·자동배정 처리량 | ✅ | L2: 예매 p95≤500ms·TPS 833~863·5xx 0.03% 합격 / **list p95~0.9s SLO(200ms) 미달**(→L3·E3). L2b: AUTO 1000석 정확 매진·oversell 0 |
 | T4-5 L3 조회 폭주 | ✅ | **①~④ 전부 완료**(2026-07-07). 병목=커넥션 점유시간. ① pool 지렛대 아님. ② SCARD tx밖: usage −63%·처리량 +62%(최대 단일 지렛대). 누적: ①②는 상호 대체재. ③ pipeline: N≈8 에선 레버 아님(측정 갈음). **④ 캐시=E3: 단일 핫키(A4/C4)에서 850→2,497 TPS·p95 8s→26ms·dropped 0 = SLO 통과(포화 해소). 캐시 켜지면 ①②③ 잉여(A4≈C4).** 다중 키(L3b)에선 만료 스파이크로 p95 SLO 초과 재현 → jitter 부분 완화(최악 525→265ms, SLO 여전 초과) → **캐시는 히트율 의존** 한계 규명 |
 | T4-6 L4 입장 초과 | ✅ | **본 측정 3회 일관 그린**(2026-06-24, K=100·RATE=500): server_errors 0(수정 전 100)·reject 85.7~85.8%·reserve p95 69~97ms·dropped 0·k6Exit 0. B-2 수정 확정 |
-| T4-7 L5 임계점 탐색(K 확정) | ⏳ | `booking.admission.max-active` 잠정값 100 → L5 결과로 확정 |
+| T4-7 L5 임계점 탐색(K 확정) | ✅ | **K=100(스케줄당) 확정**(2026-07-10, L5b 예매경로 격리): safe_TPS≈150·W≈0.9s·마진0.75 ≈ 100. 오버셀 0. 전역 K 후속 과제 |
 | T4-8 L6 지속 부하(soak) | ✅ | **완료**(2026-06-30): 부하 SLO 그린 + 정합성 게이트 green(L6_after K=2000: violation 0·k6Exit 0) + 시계열 우상향 없음(steady p95 기울기 −8.4ms/min, 하향 안정). 잔여 2건(B-1 해소 후 게이트·시계열 판정)을 T4-13 측정으로 해소 |
 | T4-9 E1·E2·E3 Before/After | ⏳(E3 완료) | **E3 완료**(2026-07-07): cache off(§1 L3, ~850 TPS·p95 8s) → cache on(2,497 TPS·p95 26ms·dropped 0) Before/After 확보 = T4-5 ④. E1-before 토글(`booking.preemption.enabled=false`)·E2 는 미구현 |
 | T4-10 E5 가상 스레드 | ⏳ | |
@@ -594,6 +594,44 @@ L4 는 슬롯 churn(입장→예매→1~2s 점유→**취소**→슬롯/좌석 �
 - 3회 모두 전 threshold 충족 (refused=0, http_reqs≈134.8K/회). 초과분이 ~85.8% 로 429 흡수되고
   예매 경로 진짜 5xx 는 0 — 입장 제어(S5)가 일관되게 동작함을 본 측정으로 확정.
 - reserve p95 의 회차 변동(69~97ms)은 모두 SLO(500ms) 대비 큰 여유 안에 있어 합격 판정에 영향 없음.
+
+---
+
+## T4-7 — L5 임계점 탐색 → 활성자 상한 K 확정 (✅ 완료, 2026-07-10)
+
+> 상태: ✅ **K=100(스케줄당) 확정**. 설계·방법론·상세 진행 로그는 `docs/plans/Admission_K_Calibration_Plan.md`.
+> 여기엔 최종 수치·판정만 요약한다.
+
+### 배경 — 왜 예매 경로만 격리했나
+L5(혼합 60% list + 40% 예매) 1·2차에서 **병목이 조회가 아니라 예매 write 경로**(reserve/cancel 각 ~0.6s
+DB 커넥션 점유)임을 규명. 입장 제어(K)는 `POST /api/entry` 한 곳, **예매 경로만 게이트**하므로(`GET
+/api/schedules` 는 ungated display tier), `K ≈ safe_booking_TPS × W` 는 예매 경로 수명으로만 역산해야
+정확. → **`L5b_booking_breakpoint.js`**(list 제거·순수 예매 루프·`session_duration` Trend) 신설.
+
+### 측정 (L5b, 계단 50→100→150→200→300 TPS, K=100·캐시 on)
+1차(계단 500→4k)는 **무효** — reserve 가 500 부터 12s → VU 즉시 소진, 완료 ~190/s 평탄(서버 천장이
+계단보다 아래라 해상도 0). 저구간 재설계 후 2차에서 임계점 확보:
+
+| 목표 TPS | 유지 VU | 달성 booking-iter/s | 판정 |
+|:-:|:-:|:-:|------|
+| 50 / 100 / 150 | 43 / 88 / 135 | 50 / 100 / 150 | ✅ 완결 추종 |
+| 200 | 급증→2000 | ~183 | ⚠️ **임계점**(목표 미달·VU 폭증) |
+| 300 | 2000 고정 | ~189 | ❌ 완전 포화(서버 천장) |
+
+### 역산 + 확정
+- **safe_booking_TPS ≈ 150**(마지막 완결 추종 plateau). 서버 천장 ~189 는 붕괴점.
+- **W ≈ 0.9s**(Little's law L/λ=VU/TPS, 세 안전 plateau 일관). 집계 `session_duration` 5.5s 는
+  붕괴구간 오염값이라 미채택.
+- **K ≈ safe_TPS × W × 마진 = 150 × 0.9 × 0.75 ≈ 100** → 잠정값 K=100 과 수렴(측정이 사후 검증).
+- **단위 = 스케줄당 K 유지**(현행 `active:{scheduleId}`, 코드 변경 0). 병목은 전역(DB pool)이라 전역 K
+  가 더 정합하나 이번 범위 밖 — **후속 과제**(단위 불일치 규명 자체가 트레이드오프 근거, C6).
+- **정합성**: teardown audit 은 붕괴 backlog 로 -1(호출 실패)이었으나 reconcile/sweep 수렴 후 수동 audit
+  `{availDrift:0, expiredHeld:0, statusViolation:0}` = **오버셀 0**(M2 게이트 green). 부수:
+  `checkConsistency` 를 status200+body null 에도 -1(위반) 반환하도록 방어 강화(거짓 통과 차단).
+
+### 코드/스크립트 변경
+- `load-tests/scenarios/L5b_booking_breakpoint.js`(신규), 러너 `-SeatHoldSeconds` 배선.
+- `application.yml`·`AdmissionProperties` K 근거 주석 확정.
 
 ---
 

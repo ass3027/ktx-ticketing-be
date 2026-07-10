@@ -13,11 +13,11 @@
 | P1 설계 확정 | 6 | 6 | 100% | M1 ✅ |
 | P2 핵심 PoC | 5 | 5 | 100% | M2 ✅ |
 | P3 기능 구현 | 13 | 13 | 100% | M3 ✅ |
-| P4 성능 측정 | 12 | 5 | 42% | M4 |
+| P4 성능 측정 | 12 | 6 | 50% | M4 |
 | P5 비동기 | 3 | 0 | 0% | — |
 | P6 산출물 | 7 | 0 | 0% | M5 |
 | P7 심화 산출물 (110%) | 3 | 0 | 0% | — |
-| **합계** | **53** | **33** | **62%** | |
+| **합계** | **53** | **34** | **64%** | |
 
 ---
 
@@ -70,7 +70,7 @@
 - [x] **T4-4** L2/L2b 정상·자동배정 처리량 → 컨테이너 k6 3회. **L2**(혼합부하 1,000VU 8분): 예매 p95 348~408ms(≤500 ✅)·TPS 833~863(≥200 ✅)·5xx 0.03~0.04%(<1% ✅) 합격, 단 **조회 p95 ~0.9s SLO(200ms) 미달**(→ 캐시/경합 가설, L3·E3 Before 로 활용). **L2b**(AUTO shared-iter): 1,000석 정확 매진(reserve_ok=1000·sold_out=1000)·oversell 0·중복 0(SPOP 원자 선점). 결과: `results/P4_Result.md`.
 - [x] **T4-5** L3 조회 폭주 → 조회 경로 최적화(4기법 각 토글 측정) **완료**(2026-07-07). **Before**: 3,000TPS 목표에서 포화(list p95 초단위·dropped 대량), 병목=DB 커넥션 점유시간(SCARD 를 `@Transactional` 안에서 페이지 편수만큼 직렬 왕복). **① pool sweep**: 10→50 +14%만→pool 은 지렛대 아님. **② SCARD tx 밖**(`booking.query.redis-outside-tx`): **usage −63%·처리량 +62%** — 최대 단일 지렛대. 단 여전히 SLO 미달. **③ pipeline**(`booking.query.pipeline`): 효과크기 논증으로 갈음 — N≈8 에선 레버 아님. **④ 조회 캐시**(`ScheduleListCache` single-flight·`booking.query-cache.*`=E3): **단일 핫키(A4/C4) 850→2,497 TPS·p95 8s→26ms·dropped 0 = SLO 통과(포화 해소)**. 캐시 켜지면 ①②③ 잉여(A4≈C4). **다중 키(L3b, from 50개)에선 만료 스파이크로 p95 SLO 초과 재현 → jitter 부분 완화(525→265ms, SLO 여전 초과) → 캐시는 히트율 의존** 한계 규명. 설계·측정: `docs/plans/Query_Path_Optimization_Plan.md`·`docs/results/P4_Result.md`(T4-5). 연관: T3-2 SCARD·T4-9 E3.
 - [x] **T4-6** L4 입장 초과 → 컨테이너 k6 본 측정 3회(K=100·RATE=500·3분+램프) 일관 그린. server_errors=0(B-2 수정 전 100)·admission_reject_rate 85.7~85.8%(초과분 429 흡수, S5 정상)·http_req_failed{entry}=0%·dropped=0·reserve p95 69~97ms(<500)·k6Exit 0. B-2 재예매 수정을 smoke→본 측정으로 확정. 결과: `results/P4_Result.md`.
-- [ ] **T4-7** L5 임계점 탐색 → **활성자 상한 K 역산·확정**
+- [x] **T4-7** L5 임계점 탐색 → **활성자 상한 K 역산·확정** → **K=100(스케줄당) 확정**(2026-07-10). L5(혼합)서 병목=예매 write 규명 → **`L5b_booking_breakpoint.js`(예매 경로 격리, list 제거·`session_duration` Trend) 신설**로 재측정. 계단 50→300 TPS: safe_booking_TPS≈150(150까지 완결 추종, 200서 임계점·VU 폭증, 300 포화=서버 천장 ~189). W≈0.9s(Little's law VU/TPS, 안전 plateau 일관). **K ≈ 150×0.9×마진0.75 ≈ 100** = 잠정값과 수렴(측정이 사후 검증). 단위=스케줄당 유지(§4 (가), 코드 0)—병목은 전역(DB pool)이나 전역 K는 후속. 정합성 수동 audit 0(오버셀 0, M2 green). 부수: `checkConsistency` body null 방어(거짓 통과 차단). `application.yml`·`AdmissionProperties` 근거 확정. 설계·진행 로그: `docs/plans/Admission_K_Calibration_Plan.md`, 결과: `P4_Result.md` T4-7.
 - [x] **T4-8** L6 지속 부하(soak) — 부하 SLO 그린 + 정합성 게이트 green(L6_after K=2000: violation 0·k6Exit 0) + 시계열 우상향 없음(steady p95 −8.4ms/min, 하향 안정). 잔여 2건(B-1 해소 후 게이트·시계열 판정)을 T4-13 측정으로 해소 (`docs/results/P4_Result.md` T4-8 완료 확인)
 - [ ] **T4-9** 실험 E1(선점/락)·E2(입장 제어)·E3(조회 캐시) Before/After + 그래프
 - [ ] **T4-10** 실험 E5: 가상 스레드(Virtual Thread) on/off 성능 비교 — `spring.threads.virtual.enabled` 토글, 동일 부하(L2)에서 처리량·p95/p99·스레드 점유 Before/After + 그래프. 락 대기(Redisson)·DB I/O 블로킹 구간이 캐리어 스레드를 점유하지 않음을 검증. (JDK 21+ / Spring Boot 4.0, JDK 24 JEP 491로 synchronized 핀닝 해소)
