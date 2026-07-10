@@ -13,11 +13,11 @@
 | P1 설계 확정 | 6 | 6 | 100% | M1 ✅ |
 | P2 핵심 PoC | 5 | 5 | 100% | M2 ✅ |
 | P3 기능 구현 | 13 | 13 | 100% | M3 ✅ |
-| P4 성능 측정 | 12 | 6 | 50% | M4 |
+| P4 성능 측정 | 13 | 6 | 46% | M4 |
 | P5 비동기 | 3 | 0 | 0% | — |
 | P6 산출물 | 7 | 0 | 0% | M5 |
 | P7 심화 산출물 (110%) | 3 | 0 | 0% | — |
-| **합계** | **53** | **34** | **64%** | |
+| **합계** | **54** | **34** | **63%** | |
 
 ---
 
@@ -85,6 +85,10 @@
   - **구현 범위**: ① 만료 대상 `(reservationId, seatInventoryId, scheduleId)` 매핑 1 SELECT → ② `UPDATE Reservation SET status=EXPIRED, version=version+1 WHERE status='HELD' AND expiresAt < :now` → ③ `UPDATE SeatInventory SET status=AVAILABLE WHERE ...` (≈ 3 roundtrip / O(1)). 토글로 건별/벌크 전환해 비교.
   - **정합성 함정(반드시 처리)**: Redis 부수효과(`returnSeat` SADD·`leave` DECR)를 **UPDATE 전 SELECT 결과로 돌리면 안 됨** — SELECT~UPDATE 사이 사용자 confirm(HELD→SOLD)된 행은 `WHERE status='HELD'`로 UPDATE에선 빠지지만 SELECT엔 남아 SOLD 좌석을 가용 풀에 반환 = **오버셀**. 실제 EXPIRED 전이된 행만 부수효과 대상이 되도록 보장(전이 후 재조회 또는 잠금). 도메인 상태머신(`Reservation.expire()`) 우회 + `@Version` 수동 증가(사용자 confirm 경로 lost-update 방어)를 직접 재구축해야 함.
   - **수용 기준**: sweep DB roundtrip 이 만료 건수와 무관(O(1)) + 오버셀 0(T3-11 정합성 테스트에 confirm-vs-sweep 경합 케이스 추가) + Before/After roundtrip·지연 수치/그래프 기록.
+- [ ] **T4-14** (T4-7 후속) 전역 활성자 상한 K 도입 — **스케줄당 K의 균등 분산 취약점 해소**. 현 `active:{scheduleId}` 는 스케줄당 상한이라 K=100×50스케줄=이론상 전역 5,000 세션 허용(서버 write 천장 ~189 대비 과다) → 부하가 여러 스케줄에 고루 퍼지면 전역 보호가 뚫린다. 실전은 소수 인기 노선 쏠림(동시 인기 ~1개)이라 K=100 이 "동시 인기 스케줄 1개" 보수 가정으로 작동하나(T4-7 §9.3), 그 가정이 깨지는 시나리오 대비.
+  - **구현**: `AdmissionService` 에 `active:global` INCR-rollback 을 기존 스케줄당 게이트 **위에 AND 조건**으로 추가(둘 다 통과해야 입장). 전역 상한 = 서버 write 천장 근거(~189×W). 세션 종료(예매 확정/취소/만료)·토큰 만료 시 전역 카운터도 함께 DECR — 스케줄당과 동일한 커밋-후 부수효과 패턴 재사용.
+  - **테스트**: `active:global` 검사-후-증가 race(스케줄당과 동일 INCR-rollback 검증) 추가. 전역 상한 발동 시 429 흡수를 L4 재측정(다중 스케줄 동시 인기 셋업)으로 확인.
+  - **트레이드오프 기록(C6)**: 스케줄당 vs 전역 K 단위 불일치를 측정으로 규명(T4-7)한 뒤 전역 K 로 해소하는 서사를 README 에 남긴다. 카운터 1개 추가 비용 vs 균등 분산 보호의 트레이드오프.
 - **DoD(M4)**: SLO 충족/미달 사유 + Before/After 그래프 + 임계점 수치
 
 ## P5. 비동기 사이드 (Could)
