@@ -102,7 +102,8 @@ export function cancelReservation(token, reservationId) {
  */
 export function checkConsistency() {
     const res = http.get(`${BASE_URL}/internal/consistency`, { tags: { type: 'audit' } });
-    if (res.status !== 200) {
+    // status 200 이어도 body 가 null 이면(연결 리셋·타임아웃) json() 이 예외 → 위반으로 처리(침묵 통과 방지).
+    if (res.status !== 200 || !res.body) {
         return -1;
     }
     return res.json('availDrift') + res.json('expiredHeld') + res.json('statusViolation');
