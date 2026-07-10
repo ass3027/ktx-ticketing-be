@@ -56,7 +56,8 @@ booking:
     # env flip 해 다중 키 스파이크 Before/After 대조(A4 는 단일 핫키라 무영향).
     ttl-jitter-ratio: ${BOOKING_QUERY_CACHE_TTL_JITTER:0}
   admission:
-    # 동시 활성 세션 상한 K — L5 임계점 탐색(T4-7)에서 역산·확정 전까지의 잠정값.
+    # 동시 활성 세션 상한 K(스케줄당). L5b 예매경로 임계점 탐색(T4-7)으로 확정:
+    # safe_TPS≈150 × W≈0.9s × 마진0.75 ≈ 100. 현 구성(pool10·2코어 MySQL)의 write 용량에 묶임 — 재구성 시 재역산.
     max-active: 100
     token-ttl: 10m
     retry-after: 5s
