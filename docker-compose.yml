@@ -39,6 +39,9 @@ services:
       BOOKING_QUERY_CACHE_ENABLED: ${BOOKING_QUERY_CACHE_ENABLED:-false}
       # TTL 지터 폭(0~1) — 다중 키 동시 만료 스파이크 완화(T4-5 ④). 기본 0=고정 TTL. 재빌드 없이 flip.
       BOOKING_QUERY_CACHE_TTL_JITTER: ${BOOKING_QUERY_CACHE_TTL_JITTER:-0}
+      # 좌석 선점(SREM) 게이트 on/off — T4-9 E1 측정용 env 토글(기본 true=프로덕션·After).
+      # false=E1 Before(SREM 우회 → 모든 요청이 DB 로 내려가 @Version/uk_active_seat 로만 방어). 재빌드 없이 flip.
+      BOOKING_PREEMPTION_ENABLED: ${BOOKING_PREEMPTION_ENABLED:-true}
     # AOT 캐시 영속화 — 컨테이너 재생성(force-recreate)에도 보존해 재 dump(~10s) 회피.
     # entrypoint 가 jar 변경 시 자동 무효화하므로 코드 변경 시엔 재 dump 된다.
     volumes:

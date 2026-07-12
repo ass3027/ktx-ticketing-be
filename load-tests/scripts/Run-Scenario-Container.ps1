@@ -51,6 +51,11 @@
     조회 단기 캐시 on/off(T4-5 ④ = E3). 'false'(기본·Before)=매 조회 DB+SCARD 직접 집계,
     'true'=Redis 공유 캐시 히트로 DB/SCARD 소거(A4/C4). 컨테이너에 실제 주입됐는지 env 로 검증한다
     (커스텀 프로퍼티라 전용 미터 없음 — 효과는 SCARD→GET rate 전환·조회 p95/포화점으로 관측).
+.PARAMETER PreemptionEnabled
+    좌석 선점(SREM) 게이트 on/off(T4-9 E1). 'true'(기본·After)=Redis 앞단에서 경합 흡수,
+    'false'(Before)=SREM 우회 → 모든 요청이 DB 로 내려가 @Version/uk_active_seat 로만 방어(오버셀 0 유지,
+    처리량/지연/pool 점유 비용 드러남). 컨테이너에 실제 주입됐는지 env 로 검증한다(커스텀 프로퍼티라 전용 미터 없음
+    — 효과는 부하 지표 reserve p95/TPS·Grafana hikaricp pool 로 관측).
 .PARAMETER Hold
     L3 유지 구간 길이(k6 __ENV.HOLD). 기본 '3m'(기존 비교 하위호환). p95 는 3,000TPS 에서 과표본이라
     정상상태만 확보되면 '90s' 등으로 단축 가능 → 회차당 시간을 줄여 반복 횟수(회차 간 분산)에 투자한다.
@@ -83,6 +88,7 @@ param(
     [ValidateSet('true','false')][string]$RedisOutsideTx = 'false',
     [ValidateSet('true','false')][string]$Pipeline = 'false',
     [ValidateSet('true','false')][string]$CacheEnabled = 'false',
+    [ValidateSet('true','false')][string]$PreemptionEnabled = 'true',
     [string]$TtlJitter = '0',
     [string]$Hold = '3m',
     [int]$Limit = 0,
@@ -150,7 +156,10 @@ function Restart-App {
             # TTL 지터도 컨테이너에 실제 주입됐는지 확인(지터 Before/After 가 옛 값으로 도는 측정 무효 방지).
             $tj = (docker compose exec -T app sh -c 'echo $BOOKING_QUERY_CACHE_TTL_JITTER' 2>$null).Trim()
             if ($tj -ne $env:BOOKING_QUERY_CACHE_TTL_JITTER) { throw "ttlJitter 보장 실패: BOOKING_QUERY_CACHE_TTL_JITTER=$tj (기대 $env:BOOKING_QUERY_CACHE_TTL_JITTER)" }
-            Write-Host "app healthy, admission=$adm, sweep(sideEffects=$se size=$bs interval=$si), hikariMax=$hikariMax, redisOutsideTx=$rtx, pipeline=$pl, queryCache=$qc, ttlJitter=$tj" -ForegroundColor Green
+            # 선점 토글도 컨테이너에 실제 주입됐는지 확인(T4-9 E1 off/on 이 옛 값으로 도는 측정 무효 방지).
+            $pe = (docker compose exec -T app sh -c 'echo $BOOKING_PREEMPTION_ENABLED' 2>$null).Trim()
+            if ($pe -ne $env:BOOKING_PREEMPTION_ENABLED) { throw "preemption 보장 실패: BOOKING_PREEMPTION_ENABLED=$pe (기대 $env:BOOKING_PREEMPTION_ENABLED)" }
+            Write-Host "app healthy, admission=$adm, sweep(sideEffects=$se size=$bs interval=$si), hikariMax=$hikariMax, redisOutsideTx=$rtx, pipeline=$pl, queryCache=$qc, ttlJitter=$tj, preemption=$pe" -ForegroundColor Green
             return
         }
         Start-Sleep -Seconds 2
@@ -217,10 +226,12 @@ $env:BOOKING_QUERY_PIPELINE = $Pipeline
 $env:BOOKING_QUERY_CACHE_ENABLED = $CacheEnabled
 # TTL 지터 주입(T4-5 ④). compose base 의 ${BOOKING_QUERY_CACHE_TTL_JITTER:-0} 가 받음.
 $env:BOOKING_QUERY_CACHE_TTL_JITTER = $TtlJitter
+# 선점 게이트 토글 주입(T4-9 E1). compose base 의 ${BOOKING_PREEMPTION_ENABLED:-true} 가 받음.
+$env:BOOKING_PREEMPTION_ENABLED = $PreemptionEnabled
 # 시나리오별 k6 __ENV 주입(HOLD/LIMIT). Limit=0 이면 미주입 → 시나리오가 서버 기본(8)을 씀.
 $scenarioEnv = @('-e', "HOLD=$Hold", '-e', "SEAT_HOLD_SECONDS=$SeatHoldSeconds")
 if ($Limit -gt 0) { $scenarioEnv += @('-e', "LIMIT=$Limit") }
-Write-Host "sweep 설정: batchSideEffects=$ExpiryBatchSideEffects batchSize=$ExpiryBatchSize interval=$ExpirySweepInterval, dbPool=$DbPoolSize, redisOutsideTx=$RedisOutsideTx, pipeline=$Pipeline, cacheEnabled=$CacheEnabled, ttlJitter=$TtlJitter, hold=$Hold, limit=$Limit, seatHoldSeconds=$SeatHoldSeconds" -ForegroundColor DarkCyan
+Write-Host "sweep 설정: batchSideEffects=$ExpiryBatchSideEffects batchSize=$ExpiryBatchSize interval=$ExpirySweepInterval, dbPool=$DbPoolSize, redisOutsideTx=$RedisOutsideTx, pipeline=$Pipeline, cacheEnabled=$CacheEnabled, ttlJitter=$TtlJitter, preemption=$PreemptionEnabled, hold=$Hold, limit=$Limit, seatHoldSeconds=$SeatHoldSeconds" -ForegroundColor DarkCyan
 
 # k6 컨테이너 안의 시나리오 경로 (load-tests 가 /work/load-tests 로 마운트됨).
 $containerScenario = "/work/" + ($Scenario -replace '\\','/')
