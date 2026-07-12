@@ -117,6 +117,10 @@ KTX 예매의 본질 난제는 "같은 좌석 동시 점유 제어"이므로, **
 | **E3** 조회 캐시 | 캐시 off (매 요청 DB 집계) | Redis 단기 캐시 | 조회 p95·DB 부하 대폭 감소 | **✅ 완료: ~850 TPS·p95 8~9s → 2,497 TPS·p95 26ms·dropped 0** (핫키, L3 3회 일관) |
 | E4 (선택) | Redis 동기 | MQ 비동기 | 처리량/지연/정합성 수치 비교 | 선택 (P5) |
 
+![E1 선점 Before/After — 선점 off/on 모두 오버셀 0(정확성 동일), 선점 on 이 reserve 중앙값 1.2s→0.29s 로 ~4× 낮춤(DB 부하 회피)·availDrift 1→0](docs/assets/e1_before_after.svg)
+
+![E2 입장 제어 Before/After — 제어 off 는 요청 p95 22s·미처리 38k·VU 2000 팽창으로 붕괴, on(K=100)은 초과 85.4%를 429 로 흡수해 reserve p95 ~28ms 로 정격 유지](docs/assets/e2_before_after.svg)
+
 ![E3 조회 캐시 Before/After — 캐시 off ~850 TPS·p95 8~9s 포화에서 캐시 on 2,497 TPS·p95 26ms로 SLO 통과](docs/assets/e3_before_after.svg)
 
 > E1·E2·E3는 필수 — **셋 다 Before/After 짝 완성**. 각 실험은 위 수치 + 한 줄 해석으로 정리한다.

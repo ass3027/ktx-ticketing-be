@@ -765,6 +765,8 @@ DB 커넥션 점유)임을 규명. 입장 제어(K)는 `POST /api/entry` 한 곳
 
 ### E1 — 선점(Redis SREM) on/off
 
+![E1 선점 Before/After — 선점 off/on 모두 오버셀 0(정확성 동일), 선점 on 이 reserve 중앙값 1.2s→0.29s 로 ~4× 낮춤(DB 부하 회피)·availDrift 1→0](../assets/e1_before_after.svg)
+
 **재정의**: "선점 off → oversell" 은 성립하지 않는다. 선점(SREM)을 꺼도 `@Version` 낙관락 + `uk_active_seat`
 DB 유니크가 오버셀을 막아 **oversell 은 양쪽 0**. E1 이 새로 보는 것은 *"정확성을 DB 에만 맡길 때의 처리 비용"* —
 1,000 이 단일 좌석에 직격할 때 선점 off 는 전부 DB 로 내려가 경합하고, 선점 on 은 999 를 Redis 앞단에서
@@ -795,6 +797,8 @@ DB 유니크가 오버셀을 막아 **oversell 은 양쪽 0**. E1 이 새로 보
   **DB 부하**에서 크며, 이는 지속 부하([[T4-6]] L4·[[T4-7]] L5)에서 K(입장 제어)와 함께 드러난다.
 
 ### E2 — 입장 제어(활성자 상한 K) on/off
+
+![E2 입장 제어 Before/After — 제어 off 는 요청 p95 22s·미처리 38k·VU 2000 팽창으로 붕괴, on(K=100)은 초과 85.4%를 429 로 흡수해 reserve p95 ~28ms 로 정격 유지](../assets/e2_before_after.svg)
 
 **목적**: 초과 offered load 를 입장 게이트(활성자 상한 K)가 **즉시 429 로 흡수**해, 뒷단(예매/DB)을 정격
 부하로 보호하는지 대조한다. Before=제어 off(`-AdmissionMax 999999`), After=제어 on(`-AdmissionMax 100`).

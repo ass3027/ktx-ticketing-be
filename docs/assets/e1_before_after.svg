@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 500" width="780" height="500" font-family="system-ui, -apple-system, 'Segoe UI', 'Malgun Gothic', sans-serif" role="img" aria-label="E1 선점 Before/After: 선점 off/on 모두 오버셀 0으로 정확성 동일, 선점 on이 reserve 중앙값 1.2s에서 0.29s로 약 4배 낮춤(DB 부하 회피)">
+  <!-- card -->
+  <rect x="1" y="1" width="778" height="498" rx="14" fill="#14161b" stroke="rgba(255,255,255,0.12)"/>
+
+  <!-- header -->
+  <text x="36" y="52" font-size="12" font-weight="600" letter-spacing="1.1" fill="#3987e5">E1 · 선점(REDIS SREM) BEFORE / AFTER</text>
+  <text x="36" y="86" font-size="24" font-weight="700" letter-spacing="-0.2" fill="#ffffff">정확성은 DB가 이미 보장 — 선점의 값은 DB 부하 회피</text>
+  <text x="36" y="115" font-size="13.5" fill="#b8bdc7">1,000 VU 단일 좌석 직격(L1). 선점 off/on 모두 <tspan font-weight="700" fill="#ffffff">오버셀 0</tspan> — @Version·uk_active_seat가 방어한다. 차이는</text>
+  <text x="36" y="134" font-size="13.5" fill="#b8bdc7">정확성이 아니라 <tspan font-weight="700" fill="#ffffff">경합 위치</tspan>: off는 999 패배가 DB row-lock/풀에 직렬화, on은 Redis SREM에서 즉시 반려한다.</text>
+
+  <!-- legend -->
+  <rect x="36" y="160" width="22" height="11" rx="3" fill="#565d6b"/>
+  <text x="64" y="170" font-size="12.5" fill="#b8bdc7">선점 off (Before)</text>
+  <rect x="196" y="160" width="22" height="11" rx="3" fill="#3987e5"/>
+  <text x="224" y="170" font-size="12.5" fill="#b8bdc7">선점 on (After)</text>
+  <text x="360" y="170" font-size="12.5" fill="#898781">단일 좌석 · 3회 일관</text>
+
+  <!-- ============ Panel 1: reserve median latency ============ -->
+  <text x="36" y="206" font-size="14.5" font-weight="640" fill="#ffffff">reserve 중앙값 지연</text>
+  <rect x="682" y="192" width="62" height="20" rx="10" fill="#14361a"/>
+  <text x="713" y="206" font-size="12.5" font-weight="650" fill="#0ca30c" text-anchor="middle">▼ ~4×</text>
+
+  <!-- gridlines (0.5 / 1.0 / 1.5 s) -->
+  <g stroke="#2c2c2a" stroke-width="1">
+    <line x1="309" y1="222" x2="309" y2="294"/>
+    <line x1="527" y1="222" x2="527" y2="294"/>
+    <line x1="744" y1="222" x2="744" y2="294"/>
+  </g>
+  <!-- baseline -->
+  <line x1="92" y1="220" x2="92" y2="296" stroke="#383835" stroke-width="2"/>
+
+  <!-- bars -->
+  <text x="82" y="241" font-size="12.5" fill="#b8bdc7" text-anchor="end">off</text>
+  <rect x="92" y="222" width="522" height="30" rx="4" fill="#565d6b"/>
+  <text x="622" y="241" font-size="13" font-weight="660" fill="#d3d7de">~1.2s</text>
+
+  <text x="82" y="283" font-size="12.5" fill="#b8bdc7" text-anchor="end">on</text>
+  <rect x="92" y="264" width="126" height="30" rx="4" fill="#3987e5"/>
+  <text x="226" y="283" font-size="13" font-weight="660" fill="#3987e5">~0.29s</text>
+
+  <text x="36" y="314" font-size="11.5" fill="#898781">눈금 = 0.5s · off는 1,000이 DB row-lock/풀(10)에 직렬화 (p95는 노이즈 커 중앙값을 주지표)</text>
+
+  <!-- ============ Panel 2: invariants (correctness + avail drift) ============ -->
+  <text x="36" y="350" font-size="14.5" font-weight="640" fill="#ffffff">정확성 불변식 · avail 드리프트</text>
+
+  <!-- card A: correctness identical -->
+  <rect x="36" y="360" width="340" height="64" rx="9" fill="#191c22" stroke="rgba(255,255,255,0.07)"/>
+  <text x="54" y="386" font-size="11.5" fill="#898781">정확성 · 오버셀(좌석당 활성 2건↑)</text>
+  <text x="54" y="412" font-size="18" font-weight="700"><tspan fill="#d3d7de">off 0</tspan><tspan fill="#0ca30c">  ≡  </tspan><tspan fill="#3987e5">on 0</tspan><tspan font-size="12.5" font-weight="500" fill="#898781">   reserve_ok 1/1</tspan></text>
+
+  <!-- card B: avail drift = DB-untouched proxy -->
+  <rect x="392" y="360" width="352" height="64" rx="9" fill="#191c22" stroke="rgba(255,255,255,0.07)"/>
+  <text x="410" y="386" font-size="11.5" fill="#898781">avail 드리프트 · DB 미접촉 방증</text>
+  <text x="410" y="412" font-size="18" font-weight="700"><tspan fill="#d3d7de">off 1</tspan><tspan fill="#898781">  →  </tspan><tspan fill="#3987e5">on 0</tspan><tspan font-size="12.5" font-weight="500" fill="#898781">   off는 승자 좌석 avail 잔존</tspan></text>
+
+  <!-- ============ footer ============ -->
+  <line x1="36" y1="440" x2="744" y2="440" stroke="#2c2c2a" stroke-width="1"/>
+  <text x="36" y="460" font-size="11" fill="#898781"><tspan font-weight="640" fill="#b8bdc7">측정</tspan>  1,000 VU shared-iterations · 단일 SEAT · 스케줄 20(미출발) · 3회 (P4_Result §T4-9)</text>
+  <text x="36" y="479" font-size="11" fill="#898781"><tspan font-weight="640" fill="#ec835a">정직한 한계</tspan>  선점은 정확성의 필요조건이 아니다(DB가 방어). 1,000 버스트가 처리량 차(~14%)를 가려 — 선점 이득은 지연보다 DB 부하에서 크다</text>
+</svg>
