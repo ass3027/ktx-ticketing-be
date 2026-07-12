@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 500" width="780" height="500" font-family="system-ui, -apple-system, 'Segoe UI', 'Malgun Gothic', sans-serif" role="img" aria-label="E3 조회 캐시 Before/After: 캐시 off ~850 TPS·p95 8~9s 포화에서 캐시 on 2,497 TPS·p95 26ms로 SLO 통과">
+  <!-- card -->
+  <rect x="1" y="1" width="778" height="498" rx="14" fill="#14161b" stroke="rgba(255,255,255,0.12)"/>
+
+  <!-- header -->
+  <text x="36" y="52" font-size="12" font-weight="600" letter-spacing="1.1" fill="#3987e5">E3 · 조회 캐시 BEFORE / AFTER</text>
+  <text x="36" y="86" font-size="24" font-weight="700" letter-spacing="-0.2" fill="#ffffff">Redis 단기 캐시로 조회 포화를 해소하다</text>
+  <text x="36" y="115" font-size="13.5" fill="#b8bdc7">L3 조회 폭주(열린 루프, 목표 <tspan font-weight="700" fill="#ffffff">3,000 TPS</tspan>)에서 캐시 on/off 토글. 캐시 미스는 DB 커넥션을 점유해</text>
+  <text x="36" y="134" font-size="13.5" fill="#b8bdc7"><tspan font-weight="700" fill="#ffffff">~850 TPS</tspan>에서 포화 — 히트 경로는 DB 풀을 우회해 목표 도착률을 실제로 발사한다.</text>
+
+  <!-- legend -->
+  <rect x="36" y="160" width="22" height="11" rx="3" fill="#565d6b"/>
+  <text x="64" y="170" font-size="12.5" fill="#b8bdc7">캐시 off (Before)</text>
+  <rect x="196" y="160" width="22" height="11" rx="3" fill="#3987e5"/>
+  <text x="224" y="170" font-size="12.5" fill="#b8bdc7">캐시 on (After)</text>
+  <text x="360" y="170" font-size="12.5" fill="#898781">A4 단일 핫키 · 3회 일관</text>
+
+  <!-- ============ Panel 1: throughput ============ -->
+  <text x="36" y="206" font-size="14.5" font-weight="640" fill="#ffffff">처리량 · 실효 TPS</text>
+  <rect x="686" y="192" width="58" height="20" rx="10" fill="#14361a"/>
+  <text x="715" y="206" font-size="12.5" font-weight="650" fill="#0ca30c" text-anchor="middle">▲ ×2.9</text>
+
+  <!-- gridlines -->
+  <g stroke="#2c2c2a" stroke-width="1">
+    <line x1="255" y1="222" x2="255" y2="294"/>
+    <line x1="418" y1="222" x2="418" y2="294"/>
+    <line x1="581" y1="222" x2="581" y2="294"/>
+    <line x1="744" y1="222" x2="744" y2="294"/>
+  </g>
+  <!-- baseline -->
+  <line x1="92" y1="220" x2="92" y2="296" stroke="#383835" stroke-width="2"/>
+
+  <!-- bars -->
+  <text x="82" y="241" font-size="12.5" fill="#b8bdc7" text-anchor="end">off</text>
+  <rect x="92" y="222" width="213" height="30" rx="4" fill="#565d6b"/>
+  <text x="297" y="241" font-size="13" font-weight="660" fill="#d3d7de" text-anchor="end">850</text>
+
+  <text x="82" y="283" font-size="12.5" fill="#b8bdc7" text-anchor="end">on</text>
+  <rect x="92" y="264" width="626" height="30" rx="4" fill="#3987e5"/>
+  <text x="710" y="283" font-size="13" font-weight="660" fill="#ffffff" text-anchor="end">2,497 TPS</text>
+
+  <text x="36" y="314" font-size="11.5" fill="#898781">눈금 = 500 TPS · off는 포화 상한(더 못 밀어냄)</text>
+
+  <!-- ============ Panel 2: query p95 vs SLO ============ -->
+  <text x="36" y="350" font-size="14.5" font-weight="640" fill="#ffffff">조회 p95 · SLO(200ms) 대비</text>
+  <circle cx="590" cy="346" r="4.5" fill="#0ca30c"/>
+  <text x="744" y="350" font-size="12.5" font-weight="660" fill="#0ca30c" text-anchor="end">SLO 통과 · ~7.7× 여유</text>
+
+  <!-- tags above track -->
+  <text x="91" y="374" font-size="12" font-weight="660" fill="#3987e5" text-anchor="middle">on · 26ms</text>
+  <text x="459" y="374" font-size="11" font-weight="640" fill="#ec835a" text-anchor="middle">SLO 200ms</text>
+
+  <!-- meter track + fill -->
+  <rect x="36" y="382" width="634" height="14" rx="7" fill="#2c2c2a"/>
+  <rect x="36" y="382" width="55" height="14" rx="7" fill="#3987e5"/>
+  <!-- SLO marker line -->
+  <line x1="459" y1="376" x2="459" y2="402" stroke="#ec835a" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- before off-scale -->
+  <text x="744" y="386" font-size="12" font-weight="600" fill="#d3d7de" text-anchor="end">↗ off · 8~9s</text>
+  <text x="744" y="401" font-size="11" fill="#898781" text-anchor="end">축 밖 · 포화</text>
+
+  <text x="36" y="420" font-size="11.5" fill="#898781">눈금 0–300ms · off p95는 포화 구간값이라 절대치 무의미(신호 = 포화)</text>
+
+  <!-- ============ footer ============ -->
+  <line x1="36" y1="440" x2="744" y2="440" stroke="#2c2c2a" stroke-width="1"/>
+  <text x="36" y="460" font-size="11" fill="#898781"><tspan font-weight="640" fill="#b8bdc7">측정</tspan>  L3 0→3,000 TPS·K=100 · off: dropped ~44만(부하모델 붕괴) → on: dropped 0 · 3회 일관 (P4_Result §T4-5 ④)</text>
+  <text x="36" y="479" font-size="11" fill="#898781"><tspan font-weight="640" fill="#ec835a">정직한 한계</tspan>  단일 핫키(히트율 ~100%) 상한 — 저히트율 다중키는 DB 풀 병목 복귀(캐시 = 히트율 의존). 예매경로 캐시 미접촉 → 오버셀 0</text>
+</svg>
