@@ -39,6 +39,11 @@ server:
   port: 8080
 
 booking:
+  preemption:
+    # T4-9 E1: 좌석 선점(SREM) 게이트 on/off. 기본 true=프로덕션(After, Redis 앞단에서 경합 흡수).
+    # env flip=E1 Before(false)=SREM 우회 → 모든 요청이 DB 로 내려가 @Version 하나로만 직렬화.
+    # 오버셀은 양쪽 0(정확성 유지) — 갈리는 건 처리량/지연/DB pool 점유(경합 위치 Redis vs DB 비용 대조).
+    enabled: ${BOOKING_PREEMPTION_ENABLED:true}
   query:
     # T4-5 ②: 잔여석 SCARD 를 DB 트랜잭션 밖에서 수행할지. 기본 false=Before(SCARD 가 tx 안 → 커넥션이
     # Redis 왕복 감쌈). env 로 재빌드 없이 flip 해 usage/포화점 변화 측정(① DB_POOL_SIZE 와 동일 패턴).

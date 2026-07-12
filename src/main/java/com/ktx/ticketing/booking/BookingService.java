@@ -16,6 +16,7 @@ import java.time.Clock;
 public class BookingService {
 
     private final SeatPreemption preemption;
+    private final PreemptionProperties preemptionProperties;
     private final SeatInventoryRepository seatInventoryRepository;
     private final ReservationRepository reservationRepository;
     private final UserRepository userRepository;
@@ -27,7 +28,9 @@ public class BookingService {
      */
     @Transactional
     public BookingResult bookSeat(Long userId, Long scheduleId, Long seatInventoryId) {
-        if (!preemption.tryPreemptSeat(scheduleId, seatInventoryId)) {
+        // 선점 off(E1 Before): SREM 게이트를 건너뛰어 모든 요청이 DB 로 내려간다 → @Version 낙관락 하나로만
+        // 직렬화(경합 패배자는 OptimisticLockException → advice 가 409 매핑). 오버셀은 여전히 0.
+        if (preemptionProperties.enabled() && !preemption.tryPreemptSeat(scheduleId, seatInventoryId)) {
             return new BookingResult.SeatTaken(); // 이미 다른 요청이 선점
         }
         return new BookingResult.Success(doHold(userId, seatInventoryId));
