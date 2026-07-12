@@ -8,8 +8,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.transaction.support.TransactionTemplate;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Queue;
@@ -39,13 +41,19 @@ class ConcurrencyPocTest extends AbstractIntegrationTest {
     /** 이 테스트 전용 train_number — 컨텍스트 공유 DB 에서 자기 시드만 식별하기 위한 격리 키. */
     static final String POC_TRAIN_NO = "KTX-poc-001";
 
+    /** 선점 off(E1 Before) 정확성 검증용 동시성 — 1,000-way 는 pool 고갈(구조적 비용)이 지배하므로
+     *  그 비용은 부하테스트(E1)에 맡기고, 여기선 @Version 단독 방어의 불변식(성공=1)만 결정적으로 본다. */
+    static final int PREEMPTION_OFF_CONTENDERS = 100;
+
     @Autowired BookingService bookingService;
     @Autowired LockBookingService lockBookingService;
     @Autowired SeatPreemption preemptionService;
     @Autowired SeatInventoryRepository seatInventoryRepository;
     @Autowired ReservationRepository reservationRepository;
+    @Autowired UserRepository userRepository;
     @Autowired EntityManager em;
     @Autowired TransactionTemplate tx;
+    @Autowired Clock clock;
 
     // 시드된 엔티티의 실제 id(@GeneratedValue 라 persist 후 채워짐). booking 호출·단언이 참조한다.
     Long scheduleId;
@@ -134,7 +142,7 @@ class ConcurrencyPocTest extends AbstractIntegrationTest {
                 successCount, failCount, unexpected
         );
 
-        assertExactlyOneWon(successCount, failCount, unexpected);
+        assertExactlyOneWon(THREAD_COUNT, successCount, failCount, unexpected);
     }
 
     @Test
@@ -149,20 +157,41 @@ class ConcurrencyPocTest extends AbstractIntegrationTest {
                 successCount, failCount, unexpected
         );
 
-        assertExactlyOneWon(successCount, failCount, unexpected);
+        assertExactlyOneWon(THREAD_COUNT, successCount, failCount, unexpected);
+    }
+
+    @Test
+    @DisplayName("E1 Before 선점 off: @Version 단독으로도 동시요청 → 성공=1, 초과판매=0")
+    void preemptionOff_동시요청_oversell_0() throws InterruptedException {
+        // 선점(SREM) 없이 모든 요청이 DB 로 내려가 @Version 낙관락 하나로만 직렬화되는 경로(E1 Before).
+        // @Transactional 프록시가 없는 수동 인스턴스이므로 호출을 TransactionTemplate 으로 감싸 동일 시맨틱 확보.
+        BookingService noPreemption = new BookingService(
+                preemptionService, new PreemptionProperties(false),
+                seatInventoryRepository, reservationRepository, userRepository, clock);
+
+        AtomicInteger successCount = new AtomicInteger();
+        AtomicInteger failCount = new AtomicInteger();
+        Queue<Throwable> unexpected = new ConcurrentLinkedQueue<>();
+
+        runConcurrently(PREEMPTION_OFF_CONTENDERS, userId ->
+                tx.execute(s -> noPreemption.bookSeat(userId, scheduleId, seatInventoryId)),
+                successCount, failCount, unexpected
+        );
+
+        assertExactlyOneWon(PREEMPTION_OFF_CONTENDERS, successCount, failCount, unexpected);
     }
 
     /**
      * 정합성 목표 검증: oversell=0 그리고 중복 예약=0.
      * 인메모리 카운터(success/fail)와 DB(SoT: 좌석 상태·예약 행)를 각각 교차검증한다.
      */
-    private void assertExactlyOneWon(AtomicInteger successCount, AtomicInteger failCount,
+    private void assertExactlyOneWon(int threadCount, AtomicInteger successCount, AtomicInteger failCount,
                                      Queue<Throwable> unexpected) {
         assertThat(unexpected)
                 .as("경합 패배(낙관락/락획득 실패) 외의 예외는 없어야 한다")
                 .isEmpty();
         assertThat(successCount.get()).isEqualTo(1);
-        assertThat(failCount.get()).isEqualTo(THREAD_COUNT - 1);
+        assertThat(failCount.get()).isEqualTo(threadCount - 1);
 
         long heldOrSoldCount = seatInventoryRepository.countByScheduleIdAndStatus(scheduleId, SeatStatus.HELD)
                 + seatInventoryRepository.countByScheduleIdAndStatus(scheduleId, SeatStatus.SOLD);
@@ -201,8 +230,11 @@ class ConcurrencyPocTest extends AbstractIntegrationTest {
                     } else {
                         failCount.incrementAndGet(); // SeatTaken/SoldOut — 정상 경쟁 패배
                     }
-                } catch (OptimisticLockingFailureException | CannotAcquireLockException e) {
-                    failCount.incrementAndGet(); // 경합 패배 — 정상 실패 경로
+                } catch (OptimisticLockingFailureException | CannotAcquireLockException
+                         | DataIntegrityViolationException e) {
+                    // 경합 패배 — 정상 실패 경로. 선점 off(E1 Before)에선 승자 커밋 후 version 을 읽은 straggler 가
+                    // 낙관락을 통과해 2번째 활성 예약 INSERT 에서 uk_active_seat 유니크(DataIntegrityViolation)에 걸린다.
+                    failCount.incrementAndGet();
                 } catch (Throwable t) {
                     unexpected.add(t);           // 경합과 무관한 진짜 이상 — 별도 수집
                     failCount.incrementAndGet();

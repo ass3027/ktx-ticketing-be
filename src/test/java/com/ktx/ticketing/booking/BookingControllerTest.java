@@ -128,6 +128,36 @@ class BookingControllerTest {
     }
 
     @Test
+    void 낙관락_충돌_OptimisticLockException은_409() throws Exception {
+        // T4-9: @Version 경쟁 패배(선점 off 의 유일 방어선·선점 on 의 최종 방어선)는 서버 오류가 아니라
+        // 경쟁 패배 → BookingExceptionHandler advice 가 409 로 매핑(500 아님).
+        givenValidToken();
+        when(bookingService.bookSeat(USER_ID, SCHEDULE_ID, SEAT_ID))
+                .thenThrow(new org.springframework.dao.OptimisticLockingFailureException("version conflict"));
+
+        mvc.perform(post("/api/reservations")
+                        .header(BookingController.ENTRY_TOKEN_HEADER, TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body("SEAT", SEAT_ID)))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void 활성좌석_유니크위반_DataIntegrityViolation은_409() throws Exception {
+        // T4-9: 승자 커밋 후 version 을 읽은 straggler 가 낙관락은 통과하나 uk_active_seat 유니크에 걸림.
+        // 이 역시 좌석 점유(경쟁 패배)이므로 advice 가 409 로 매핑(500 아님).
+        givenValidToken();
+        when(bookingService.bookSeat(USER_ID, SCHEDULE_ID, SEAT_ID))
+                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("uk_active_seat"));
+
+        mvc.perform(post("/api/reservations")
+                        .header(BookingController.ENTRY_TOKEN_HEADER, TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body("SEAT", SEAT_ID)))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
     void AUTO_잔여없음_SoldOut은_410() throws Exception {
         givenValidToken();
         when(bookingService.bookAuto(USER_ID, SCHEDULE_ID)).thenReturn(new BookingResult.SoldOut());
