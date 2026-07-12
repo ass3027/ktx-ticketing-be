@@ -19,7 +19,7 @@
 | T4-6 L4 입장 초과 | ✅ | **본 측정 3회 일관 그린**(2026-06-24, K=100·RATE=500): server_errors 0(수정 전 100)·reject 85.7~85.8%·reserve p95 69~97ms·dropped 0·k6Exit 0. B-2 수정 확정 |
 | T4-7 L5 임계점 탐색(K 확정) | ✅ | **K=100(스케줄당) 확정**(2026-07-10, L5b 예매경로 격리): safe_TPS≈150·W≈0.9s·마진0.75 ≈ 100. 오버셀 0. 전역 K 후속 과제 |
 | T4-8 L6 지속 부하(soak) | ✅ | **완료**(2026-06-30): 부하 SLO 그린 + 정합성 게이트 green(L6_after K=2000: violation 0·k6Exit 0) + 시계열 우상향 없음(steady p95 기울기 −8.4ms/min, 하향 안정). 잔여 2건(B-1 해소 후 게이트·시계열 판정)을 T4-13 측정으로 해소 |
-| T4-9 E1·E2·E3 Before/After | ⏳(E3 완료) | **E3 완료**(2026-07-07): cache off(§1 L3, ~850 TPS·p95 8s) → cache on(2,497 TPS·p95 26ms·dropped 0) Before/After 확보 = T4-5 ④. E1-before 토글(`booking.preemption.enabled=false`)·E2 는 미구현 |
+| T4-9 E1·E2·E3 Before/After | ✅ | **E1·E2·E3 완료**(2026-07-12): E3=[[T4-5]] ④ cache off/on. E1=선점 off/on(정확성 양쪽 0, 선점 on reserve 중앙값 ~4×↓·availDrift 0). E2=입장 제어 off/on(off 는 p95 22s·drop 38k·VU 2000 팽창, on 은 85.4% 429 흡수·reserve p95 ~28ms·drop 0). → §T4-9 |
 | T4-10 E5 가상 스레드 | ⏳ | |
 | T4-11 E6 분산 락 라이브러리 비교 | ⏳ | `DistributedLock` 추상화는 완료 |
 | T4-12 E7 선점 백엔드(Redis vs Memcached) | ⏳ | `SeatPreemption` 추상화는 완료 |
@@ -747,3 +747,85 @@ DB 커넥션 점유)임을 규명. 입장 제어(K)는 `POST /api/entry` 한 곳
 
 > 산출물: Before `load-tests/results/L6_before_results.zip`(summary/run_log/dashboard 3종) ·
 > After `L6_after_summary.json`/`L6_after_container_run_1.txt`/`L6_after_dashboard.html`.
+
+---
+
+## T4-9 — 실험 E1·E2 Before/After (완료, 2026-07-12)
+
+> 상태: E1(선점)·E2(입장 제어) Before/After 실측 **완료**. E3(조회 캐시)는 [[T4-5]] ④ 로 이미 확보.
+> 토글: E1=`booking.preemption.enabled`(`BOOKING_PREEMPTION_ENABLED`, 러너 `-PreemptionEnabled`),
+> E2=`booking.admission.max-active`(`-AdmissionMax`). 컨테이너 실주입값을 러너가 검증(옛 설정 무효측정 방지).
+> 측정 계획: `docs/plans/e1-e2-*.md`. 산출물: `load-tests/results/E1_*`·`E2_*`(`.gitignore`).
+
+### 측정 환경 주의 — 미출발 스케줄 타깃
+시드(`DataInitializer`)의 스케줄 출발일이 `2026-07-01 + i일` 하드코딩이라, 측정일(2026-07-12) 기준
+스케줄 1~12 가 **이미 출발** → avail 워밍업/reconcile 대상에서 제외돼 `avail:1` 이 비어 있다(선점 on 경로
+무효). 그래서 E1/E2 는 **미출발 스케줄 20**(좌석 19001)을 타깃했다(`-ScheduleId 20 -SeatInventoryId 19001`).
+근본 수정(시드 상대날짜화)은 백로그. → 자세한 규명: 세션 메모리 `seed-schedule-date-staleness`.
+
+### E1 — 선점(Redis SREM) on/off
+
+**재정의**: "선점 off → oversell" 은 성립하지 않는다. 선점(SREM)을 꺼도 `@Version` 낙관락 + `uk_active_seat`
+DB 유니크가 오버셀을 막아 **oversell 은 양쪽 0**. E1 이 새로 보는 것은 *"정확성을 DB 에만 맡길 때의 처리 비용"* —
+1,000 이 단일 좌석에 직격할 때 선점 off 는 전부 DB 로 내려가 경합하고, 선점 on 은 999 를 Redis 앞단에서
+즉시 반려(409)해 DB 를 건드리지 않는다. (경합 패배는 OptLock/유니크 위반 → advice 가 409 로 매핑.)
+
+부하: `shared-iterations` 1,000 VU / 1,000 iter, 단일 SEAT 직격(L1 프로파일), 각 3회.
+
+| 지표 (reserve 경로) | Before (선점 off) 3회 | After (선점 on) 3회 | 판정 |
+|------|------|------|------|
+| `reserve_ok` (성공=오버셀 게이트) | **1 / 1 / 1** | **1 / 1 / 1** | 양쪽 오버셀 0 (정확성 동일) |
+| `oversell`(statusViolation) | **0 / 0 / 0** | **0 / 0 / 0** | 좌석당 활성 1건 |
+| `http_req_duration{type:reserve}` **중앙값** | 1.13s / 1.33s / 1.19s (~**1.2s**) | 272ms / 323ms / 265ms (~**0.29s**) | **선점 on 이 ~4× 낮음** |
+| `http_req_duration{type:reserve}` p95 | 22.4s / 2.16s / 22.4s | 425ms / 495ms / *20.6s* | 노이즈 큼(아래 해석) |
+| audit `availDrift` | 1 / 1 / 1 (선점 off 예상) | 0 / 0 / 0 | off 는 avail 미유지(reconcile 이 치유) |
+| k6 exit | 0 / 0 / 0 | 0 / 0 / **99** | after run3 은 p95 스파이크로 SLO ✗ |
+
+**해석**
+- **정확성은 양쪽 완전 동일(오버셀 0)** — 이게 헤드라인. 선점은 *정확성의 필요조건이 아니다*(DB 가 이미 방어).
+  선점의 값은 **DB 부하 회피**다: 선점 on 은 999 패배 요청이 Redis SREM 에서 즉시 반려돼 DB 를 안 친다.
+  `availDrift` 가 off=1(승자 좌석이 avail 에 잔존)·on=0 인 것이 "off 는 avail/DB 를 우회 안 함"을 방증.
+- **중앙값 reserve 지연 ~1.2s → ~0.29s (~4×)** 가 그 비용을 보여준다 — 선점 off 는 1,000 이 DB row-lock/
+  pool(10)에 밀려 직렬화된다.
+- **p95 는 정직하게 노이즈가 크다**: ~20s 단발 스파이크가 양쪽에 간헐 출현(off 2/3·on 1/3회). 이는
+  cold-JVM(회차마다 force-recreate)·1,000 동시 버스트의 HTTP 수용 큐잉에서 오는 환경 노이즈로, 선점
+  변수에 깨끗이 귀속되지 않는다. 그래서 **중앙값을 주 지표로** 삼고 p95 는 분포 참고로 둔다.
+- **한계(정직)**: 1,000 버스트·단일 좌석은 처리량/지연 차이가 HTTP 버스트 처리에 상당 부분 가려진다
+  (wall-clock ~6.8s vs ~6.0s, 처리량 차 ~14%). 선점의 구조적 이득(DB 왕복 999 vs ~0)은 지연보다
+  **DB 부하**에서 크며, 이는 지속 부하([[T4-6]] L4·[[T4-7]] L5)에서 K(입장 제어)와 함께 드러난다.
+
+### E2 — 입장 제어(활성자 상한 K) on/off
+
+**목적**: 초과 offered load 를 입장 게이트(활성자 상한 K)가 **즉시 429 로 흡수**해, 뒷단(예매/DB)을 정격
+부하로 보호하는지 대조한다. Before=제어 off(`-AdmissionMax 999999`), After=제어 on(`-AdmissionMax 100`).
+
+부하: `ramping-arrival-rate`(open-loop) RATE=500 iter/s, 30s+3m+30s, `bookAuto`+churn(1–2s 후 취소),
+미출발 스케줄 20, 각 3회. open-loop 라 서버가 못 따라오면 VU 가 불어나거나(closed 보정) iteration 이 drop 된다.
+
+| 지표 | Before (제어 off, K=999999) 3회 | After (제어 on, K=100) 3회 | 판정 |
+|------|------|------|------|
+| `admission_rejected`(429 흡수) | 0 / 0 / 0 | **89,652 / 89,622 / 89,650** (≈85.4%) | on 이 초과분을 게이트에서 반려 |
+| `dropped_iterations`(미처리 offered) | **38,247 / 38,482 / 39,134** | **0 / 0 / 0** | off 는 부하를 못 삼켜 드롭 |
+| `vus_max`(자원 팽창) | **2,000 / 2,000 / 2,000** (상한까지) | **500 / 500 / 500** (실활성 ~101 고정) | off 는 VU 풀 무한 팽창 |
+| `http_req_duration` p95 (전체) | **22.24s / 22.26s / 22.29s** | **20.7ms / 18.99ms / 18.88ms** | off p95 ~22s, 정격 붕괴 |
+| `http_req_duration{type:reserve}` p95 | (전체와 혼재)¹ | **28.6ms / 29.1ms / 27.5ms** | on 예매 경로 SLO(≤500ms) 안 |
+| `server_errors`(5xx) | **0 / 0 / 0** | **0 / 0 / 0** | 양쪽 5xx 없음(아래 해석) |
+| `consistency_violation` | **0 / 0 / 0** | **0 / 0 / 0** | 양쪽 정합성 보존 |
+| k6 exit | 0 / 0 / 0 | 0 / 0 / 0 | — |
+
+> ¹ Before 는 좌석 풀 대부분이 정격 초과 큐잉이라 reserve 서브메트릭도 전체와 사실상 동일(med 1.79s·p95 22s).
+
+**해석**
+- **입장 제어 off 의 비용은 "5xx 폭증"이 아니라 "무한 열화"다** — 이게 정직한 헤드라인. off 는 서버가
+  죽지(5xx) 않는 대신, ① offered load 를 못 삼켜 **38k+ iteration 이 drop**, ② 부하를 버티려 **VU 가 상한
+  2,000 까지 팽창**(=커넥션/스레드 무한 증가), ③ 요청 **p95 가 22s 로 붕괴**(SLO 500ms 의 44배). 즉 우아하게
+  느려지는 게 아니라 **경계 없이** 자원을 빨아들이며 정격을 잃는다.
+- **입장 제어 on 은 이 초과분을 게이트에서 즉시 429 로 흡수**한다: 105k offered 중 **85.4% (89.6k)를 429 로 반려**,
+  통과분만 뒷단에 도달 → **VU 실활성 ~101 고정**(2,000 대비), **dropped 0**, 예매 **reserve p95 ≈28ms**(SLO 여유).
+  즉 "무경계 열화"를 **경계 있는 빠른 반려**로 바꾼다(사용자에겐 Retry-After 로 재시도 유도).
+- **정합성은 양쪽 0** — 입장 제어는 정확성 장치가 아니라 **부하 보호(가용성/지연) 장치**다. E1(선점)이 정확성을
+  DB 에 맡길 때의 *DB 부하* 비용을 보였다면, E2 는 입장 게이트가 없을 때의 *시스템 정격* 비용을 보인다 —
+  둘 다 "정확성은 이미 DB 가 보장, 성능/가용성은 앞단 게이트가 지킨다"는 [[아키텍처]] 2-tier 서사를 실측으로 뒷받침.
+- **한계(정직)**: Before 가 5xx 대신 dropped/지연으로 나타난 건 k6 open-loop 가 커넥션을 스스로 큐잉하기
+  때문(서버 accept 큐 + k6 VU 확장). 실제 프로덕션에선 이 지점이 톰캣 `accept-count` 초과 시 커넥션 거부(5xx/
+  타임아웃)로 이어질 수 있다 — 즉 dropped/22s-p95 는 그 **전조 지표**이며, 제어 on 이 이를 사전 차단한다.
