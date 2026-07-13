@@ -9,7 +9,9 @@ import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -78,7 +80,10 @@ public class DataInitializer implements ApplicationRunner {
 
     private void seedSchedules(Long trainId) {
         List<Object[]> batch = new ArrayList<>(TOTAL_SCHEDULES);
-        LocalDateTime base = LocalDateTime.of(2026, 7, 1, 8, 0);
+        // 상대날짜: "오늘(KST) + 1일 08:00" 부터 하루 간격 50편(B-4). 고정일 하드코딩은 시간이 지나면
+        // 앞쪽 스케줄이 과거가 돼 findUpcomingIds(departureTime > now) 에서 빠지고, avail 풀에 안 올라가
+        // 예매 부하/시연이 SoldOut 으로 거짓 실패한다. +1일 오프셋으로 첫 편도 실행 내내 확실히 미래.
+        LocalDateTime base = LocalDate.now(ZoneId.of("Asia/Seoul")).plusDays(1).atTime(8, 0);
         for (int i = 0; i < TOTAL_SCHEDULES; i++) {
             LocalDateTime dep = base.plusDays(i);
             batch.add(new Object[]{trainId, "서울", "부산", dep, dep.plusHours(2).plusMinutes(30), TOTAL_CARS * SEATS_PER_CAR});
@@ -87,6 +92,8 @@ public class DataInitializer implements ApplicationRunner {
             "INSERT INTO schedule(train_id, departure_station, arrival_station, departure_time, arrival_time, total_seats) VALUES (?,?,?,?,?,?)",
             batch
         );
+        log.info("Seeded {} schedules: {} ~ {} (KST)",
+            TOTAL_SCHEDULES, base, base.plusDays(TOTAL_SCHEDULES - 1L));
     }
 
     private void seedSeatInventory(Long trainId) {

@@ -5,7 +5,7 @@
  *       으로 캐시 키가 1개 = 히트율 ~100%(핫키 상한 효과)만 잰다. 여기선 from 을 시드된 50일에 균등
  *       분산해 캐시 키를 50개로 갈라, 미스 빈도(키당 TTL 만료)를 50배로 올린 "리얼한 다키" 조회를 잰다.
  *
- * 키 분산 원리: 시드(DataInitializer)는 서울→부산 50편을 departure_time = 2026-07-01 08:00 + i일
+ * 키 분산 원리: 시드(DataInitializer)는 서울→부산 50편을 departure_time = (오늘 KST + 1일) 08:00 + i일
  *   (i=0..49)로 깐다. 조회는 departureTime > from 이라, from 을 그 50개 시각으로 돌리면 매 요청이
  *   서로 다른 첫 페이지(=서로 다른 캐시 키 qcache:list:서울:부산:{from}:0:8)를 친다. 모든 응답은 실제
  *   데이터(빈 페이지 아님, 마지막 날짜여도 그 이후 편이 있거나 마지막 1편) — 캐시 값이 유효하다.
@@ -20,8 +20,12 @@ import http from 'k6/http';
 const RATE = parseInt(__ENV.RATE || '3000');
 const HOLD = __ENV.HOLD || '3m';
 
-// 시드 스케줄 시작 시각(DataInitializer.base)과 일치. 여기서 하루 간격 50개 from 을 생성한다.
-const BASE_DATE = new Date(Date.UTC(2026, 6, 1, 8, 0, 0)); // 2026-07-01 08:00 (month 0-based)
+// 시드 base(오늘 KST + 1일 08:00, DataInitializer 와 동일 규칙)와 일치(B-4). 하드코딩 제거.
+// k6 컨테이너 UTC → epoch +9h 로 KST 달력일 이동 후 08:00 고정. 여기서 하루 간격 50개 from 생성.
+const KST_OFFSET_MS = 9 * 3600 * 1000;
+const _nowKst = new Date(Date.now() + KST_OFFSET_MS);
+const BASE_DATE = new Date(Date.UTC(
+    _nowKst.getUTCFullYear(), _nowKst.getUTCMonth(), _nowKst.getUTCDate() + 1, 8, 0, 0));
 const KEY_COUNT = parseInt(__ENV.KEY_COUNT || '50');
 
 // from 후보 50개(하루씩)를 ISO(초까지, 타임존 없이 LocalDateTime 파싱형)로 미리 만든다.
