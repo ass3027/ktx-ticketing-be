@@ -99,7 +99,10 @@ JAVA_HOME="$(find "$HOME/.jdks" -maxdepth 1 -iname '*25*' -type d 2>/dev/null | 
 | `main` | 항상 배포 가능한 상태. PR + CI 통과 필수 |
 | `develop` | 기능 통합 브랜치. feature/* → develop → main |
 | `feature/{task-id}-{desc}` | 기능 개발 (예: `feature/t3-6-booking-seat`) |
+| `fix/{task-id}-{desc}` | 버그 수정 (예: `fix/b-4-seed-relative-date`) |
 | `test/{experiment}` | 실험/PoC 비교 (예: `test/e1-lock-comparison`) |
+
+> **접두어 선택 기준**: 새 동작·엔티티·API를 추가하면 `feature/`, 기존 동작의 결함을 바로잡으면(백로그 B-/버그 재현 해소 등) `fix/`, 실험·비교 PoC(E-)는 `test/`. 커밋 타입(`feat`/`fix`/`test`)과 브랜치 접두어를 일치시킨다.
 
 ## 개발 워크플로우
 
