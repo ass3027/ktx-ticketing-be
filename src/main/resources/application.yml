@@ -3,15 +3,27 @@ spring:
     name: ktx-ticketing-be
 
   datasource:
-    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:ktx_ticketing}?serverTimezone=Asia/Seoul&characterEncoding=UTF-8&rewriteBatchedStatements=true
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3308}/${DB_NAME:ktx_ticketing}?serverTimezone=Asia/Seoul&characterEncoding=UTF-8&rewriteBatchedStatements=true
     username: ${DB_USER:ktx}
     password: ${DB_PASSWORD:ktx1234}
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      # 커넥션 풀 상한. 기본 10 = HikariCP 기본값(현재/Before). T4-5 ① 측정에서 env 로 토글해
+      # 포화점 변화를 관측(재빌드 없이). HikariCP 공식 (core×2)+spindle 기준 2코어 환경 이론값≈5 라
+      # 10 도 이미 여유분 — 상향 효과는 점유시간(usage) 병목에 종속(§Query_Path_Optimization_Plan).
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+
+  # 스키마는 Flyway(db/migration/V*.sql)가 생성·관리. ddl-auto 는 validate 로 둬
+  # 엔티티 ↔ 실제 스키마 불일치를 기동 시 즉시 검출(생성 컬럼은 미매핑이라 validate 무관).
+  flyway:
+    enabled: true
+    baseline-on-migrate: true   # 이미 ddl-auto 로 스키마가 있는 기존 DB 에 V1 을 baseline 으로 흡수.
+    baseline-version: 0          # V1 부터 적용되도록 baseline 을 0 으로.
 
   jpa:
     open-in-view: false
     hibernate:
-      ddl-auto: none
+      ddl-auto: validate
     show-sql: false
     properties:
       hibernate:
@@ -27,16 +39,44 @@ server:
   port: 8080
 
 booking:
+  preemption:
+    # T4-9 E1: 좌석 선점(SREM) 게이트 on/off. 기본 true=프로덕션(After, Redis 앞단에서 경합 흡수).
+    # env flip=E1 Before(false)=SREM 우회 → 모든 요청이 DB 로 내려가 @Version 하나로만 직렬화.
+    # 오버셀은 양쪽 0(정확성 유지) — 갈리는 건 처리량/지연/DB pool 점유(경합 위치 Redis vs DB 비용 대조).
+    enabled: ${BOOKING_PREEMPTION_ENABLED:true}
+  query:
+    # T4-5 ②: 잔여석 SCARD 를 DB 트랜잭션 밖에서 수행할지. 기본 false=Before(SCARD 가 tx 안 → 커넥션이
+    # Redis 왕복 감쌈). env 로 재빌드 없이 flip 해 usage/포화점 변화 측정(① DB_POOL_SIZE 와 동일 패턴).
+    redis-outside-tx: ${BOOKING_QUERY_REDIS_OUTSIDE_TX:false}
+    # T4-5 ③: 페이지 편수(N)만큼의 SCARD 를 파이프라인 1회 왕복으로 묶을지. 기본 false=직렬 N회(Before).
+    # env 로 재빌드 없이 flip 해 RTT 절감 효과 측정(②와 독립 — tx 안/밖 어느 경로든 조합 가능).
+    pipeline: ${BOOKING_QUERY_PIPELINE:false}
+  query-cache:
+    # T4-5 ④(=E3): 리스트+잔여석을 Redis 공유 캐시에 짧은 TTL 로 담아 히트 시 DB/SCARD 소거.
+    # 기본 false=Before(cache off). env flip=E3 after(A4/C4). single-flight 로 만료 순간 stampede 방어.
+    enabled: ${BOOKING_QUERY_CACHE_ENABLED:false}
+    # staleness 상한. 2-tier 계약(표시 staleness ≤ ~2s) 아래 여유로 기본 1s. 오버셀과 무관(예매는 캐시 미접촉).
+    ttl: ${BOOKING_QUERY_CACHE_TTL:1s}
+    # TTL 만료 지터 폭(0~1). 다중 키 동시 만료 → DB 파도(p95 스파이크) 완화용. 기본 0=고정 TTL(Before).
+    # env flip 해 다중 키 스파이크 Before/After 대조(A4 는 단일 핫키라 무영향).
+    ttl-jitter-ratio: ${BOOKING_QUERY_CACHE_TTL_JITTER:0}
   admission:
-    # 동시 활성 세션 상한 K — L5 임계점 탐색(T4-7)에서 역산·확정 전까지의 잠정값.
+    # 동시 활성 세션 상한 K(스케줄당). L5b 예매경로 임계점 탐색(T4-7)으로 확정:
+    # safe_TPS≈150 × W≈0.9s × 마진0.75 ≈ 100. 현 구성(pool10·2코어 MySQL)의 write 용량에 묶임 — 재구성 시 재역산.
     max-active: 100
     token-ttl: 10m
     retry-after: 5s
   expiry:
     # HELD TTL 만료 sweep 1회 최대 처리 건수. 밀린 만료는 다음 sweep 이 이어받는다.
-    batch-size: 100
+    # T4-13: L6 soak 에서 sweep 처리율(구 batch100/interval30s≈3건/s)이 부하의 만료 유입을 못 따라가
+    # expiredHeld 적체·재고 잠금이 발생 → 상한 상향(부수효과는 scheduleId별 배치 SADD/DECRBY 로 묶음).
+    batch-size: 1000
     # sweep 실행 주기(직전 완료~다음 시작 간격). HELD TTL(5분)보다 짧게 둬 만료 좌석을 신속 회수.
-    sweep-interval: 30s
+    # 30s 유휴가 처리율을 지배하던 병목 — 2s 로 단축(유입 없을 땐 빈 sweep 이라 폴링 부하 미미).
+    sweep-interval: 2s
+    # 커밋 후 Redis 부수효과(SADD/DECR) 발사 방식. true(기본)=scheduleId별 배치(RTT를 schedule 수로 bound),
+    # false=건별 직렬(2N RTT, T4-13 Before 비교 기준). 정합성은 양쪽 동일.
+    batch-side-effects: true
   reconcile:
     # Redis 가용 풀 ↔ DB(SoT) 드리프트 보정 주기. 드리프트는 드물어 만료(30s)보다 덜 잦게.
     interval: 60s

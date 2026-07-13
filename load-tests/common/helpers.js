@@ -17,7 +17,8 @@ export function getEntryToken(userId, scheduleId) {
     const res = http.post(
         `${BASE_URL}/api/entry`,
         JSON.stringify({ userId, scheduleId }),
-        { headers: { 'Content-Type': 'application/json' } }
+        // responseType:'text' — discardResponseBodies:true 시나리오(L5)에서도 token 본문을 유지.
+        { headers: { 'Content-Type': 'application/json' }, tags: { type: 'entry' }, responseType: 'text' }
     );
     if (res.status === 201) {
         return res.json('token');
@@ -55,6 +56,8 @@ export function bookAuto(token) {
                 'X-Entry-Token': token,
             },
             tags: { type: 'reserve' },
+            // responseType:'text' — discardResponseBodies:true 시나리오(L5)에서도 reservationId 유지(churn 취소용).
+            responseType: 'text',
         }
     );
 }
@@ -68,17 +71,74 @@ export function confirmReservation(token, reservationId) {
         null,
         {
             headers: { 'X-Entry-Token': token },
-            tags: { type: 'confirm' },
+            // name 태그로 동적 URL(예약 ID)을 묶는다 — 미지정 시 ID마다 time-series 폭발.
+            tags: { type: 'confirm', name: '/api/reservations/:id/confirm' },
         }
     );
 }
 
 /**
+ * 예매 취소 (DELETE). 좌석(avail SADD)과 활성 슬롯(leave DECR)을 모두 반환한다.
+ */
+export function cancelReservation(token, reservationId) {
+    return http.del(
+        `${BASE_URL}/api/reservations/${reservationId}`,
+        null,
+        {
+            headers: { 'X-Entry-Token': token },
+            // 동적 URL(예약 ID)을 name 태그로 묶는다 — 미지정 시 ID마다 time-series 폭발.
+            tags: { type: 'cancel', name: '/api/reservations/:id' },
+        }
+    );
+}
+
+/**
+ * 부하 후 정합성 audit 호출(U-2). 앱의 읽기전용 `/internal/consistency`(mutation 없음)를 쳐서
+ * availDrift·expiredHeld·statusViolation 합산 위반 수를 얻는다. 시나리오 `teardown()` 에서 호출해
+ * `Counter('consistency_violation')` 로 승격하면 `threshold count==0` 으로 ps1 사후 SQL 없이 자동 판정된다.
+ *
+ * @returns {number} totalViolations — 0 이면 정합. 엔드포인트 호출 실패(비200)는 -1 로 표기해
+ *                   teardown 이 위반으로 처리(침묵 통과 방지).
+ */
+export function checkConsistency() {
+    const res = http.get(`${BASE_URL}/internal/consistency`, { tags: { type: 'audit' } });
+    // status 200 이어도 body 가 null 이면(연결 리셋·타임아웃) json() 이 예외 → 위반으로 처리(침묵 통과 방지).
+    if (res.status !== 200 || !res.body) {
+        return -1;
+    }
+    return res.json('availDrift') + res.json('expiredHeld') + res.json('statusViolation');
+}
+
+/**
+ * 정합성 audit 의 항목별 원시 수치(T4-13). 위반 합계({@link checkConsistency})만으로는 Before/After 에서
+ * "왜" 위반인지(sweep 적체=expiredHeld vs 드리프트=availDrift)를 구분 못 하므로, sweep 처리율 판정에 쓸
+ * expiredHeld 적체를 항목별로 노출한다. 비200 은 모든 항목 -1.
+ *
+ * @returns {{availDrift:number, expiredHeld:number, statusViolation:number}}
+ */
+export function consistencyDetail() {
+    const res = http.get(`${BASE_URL}/internal/consistency`, { tags: { type: 'audit' } });
+    if (res.status !== 200) {
+        return { availDrift: -1, expiredHeld: -1, statusViolation: -1 };
+    }
+    return {
+        availDrift: res.json('availDrift'),
+        expiredHeld: res.json('expiredHeld'),
+        statusViolation: res.json('statusViolation'),
+    };
+}
+
+// 옵션: 페이지 크기(=요청당 SCARD N). 미설정 시 서버 기본(DEFAULT_LIMIT=8). T4-5 ③ pipeline 은
+// N 이 클수록 효과(RTT×N→×1)가 커지므로 LIMIT 로 N 을 키워 효과크기를 가시화한다(시드 상한 50).
+const LIMIT = __ENV.LIMIT;
+
+/**
  * 운행 리스트 조회.
  */
 export function listSchedules(dep, arr, from) {
+    const limitParam = LIMIT ? `&limit=${LIMIT}` : '';
     return http.get(
-        `${BASE_URL}/api/schedules?dep=${encodeURIComponent(dep)}&arr=${encodeURIComponent(arr)}&from=${encodeURIComponent(from)}`,
+        `${BASE_URL}/api/schedules?dep=${encodeURIComponent(dep)}&arr=${encodeURIComponent(arr)}&from=${encodeURIComponent(from)}${limitParam}`,
         { tags: { type: 'list' } }
     );
 }

@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 500" width="780" height="500" font-family="system-ui, -apple-system, 'Segoe UI', 'Malgun Gothic', sans-serif" role="img" aria-label="E2 입장 제어 Before/After: 제어 off는 요청 p95 22s·미처리 38k·VU 2000 팽창으로 붕괴, on(K=100)은 초과 85.4%를 429로 흡수해 reserve p95 28ms로 정격 유지">
+  <!-- card -->
+  <rect x="1" y="1" width="778" height="498" rx="14" fill="#14161b" stroke="rgba(255,255,255,0.12)"/>
+
+  <!-- header -->
+  <text x="36" y="52" font-size="12" font-weight="600" letter-spacing="1.1" fill="#3987e5">E2 · 입장 제어(활성자 상한 K) BEFORE / AFTER</text>
+  <text x="36" y="86" font-size="24" font-weight="700" letter-spacing="-0.2" fill="#ffffff">제어 off의 비용은 5xx가 아니라 ‘무한 열화’</text>
+  <text x="36" y="115" font-size="13.5" fill="#b8bdc7">500 iter/s 초과 offered load(열린 루프). off(K=999999)는 서버가 못 삼켜 요청 <tspan font-weight="700" fill="#ffffff">p95 22s·미처리 38k·VU 2,000</tspan> 팽창.</text>
+  <text x="36" y="134" font-size="13.5" fill="#b8bdc7">on(K=100)은 초과분을 입장 게이트에서 <tspan font-weight="700" fill="#ffffff">429로 즉시 흡수</tspan> → 통과분만 뒷단 도달(정격 유지).</text>
+
+  <!-- legend -->
+  <rect x="36" y="160" width="22" height="11" rx="3" fill="#565d6b"/>
+  <text x="64" y="170" font-size="12.5" fill="#b8bdc7">제어 off (Before)</text>
+  <rect x="196" y="160" width="22" height="11" rx="3" fill="#3987e5"/>
+  <text x="224" y="170" font-size="12.5" fill="#b8bdc7">제어 on · K=100 (After)</text>
+  <text x="392" y="170" font-size="12.5" fill="#898781">RATE=500 · 3회 일관</text>
+
+  <!-- ============ Panel 1: 429 rejection (excess absorption) ============ -->
+  <text x="36" y="206" font-size="14.5" font-weight="640" fill="#ffffff">초과 흡수 · 429 반려율</text>
+  <rect x="646" y="192" width="98" height="20" rx="10" fill="#14361a"/>
+  <text x="695" y="206" font-size="12" font-weight="650" fill="#0ca30c" text-anchor="middle">89,652건 흡수</text>
+
+  <!-- gridlines (25 / 50 / 75 / 100 %) -->
+  <g stroke="#2c2c2a" stroke-width="1">
+    <line x1="255" y1="222" x2="255" y2="294"/>
+    <line x1="418" y1="222" x2="418" y2="294"/>
+    <line x1="581" y1="222" x2="581" y2="294"/>
+    <line x1="744" y1="222" x2="744" y2="294"/>
+  </g>
+  <!-- baseline -->
+  <line x1="92" y1="220" x2="92" y2="296" stroke="#383835" stroke-width="2"/>
+
+  <!-- bars -->
+  <text x="82" y="241" font-size="12.5" fill="#b8bdc7" text-anchor="end">off</text>
+  <rect x="92" y="222" width="3" height="30" rx="1.5" fill="#565d6b"/>
+  <text x="103" y="241" font-size="13" font-weight="640" fill="#898781">0% · 전량 뒷단으로</text>
+
+  <text x="82" y="283" font-size="12.5" fill="#b8bdc7" text-anchor="end">on</text>
+  <rect x="92" y="264" width="557" height="30" rx="4" fill="#3987e5"/>
+  <text x="641" y="283" font-size="13" font-weight="660" fill="#ffffff" text-anchor="end">85.4%</text>
+
+  <text x="36" y="314" font-size="11.5" fill="#898781">눈금 = 25% · on은 105k offered 중 89.6k를 게이트에서 반려(Retry-After) — 통과분만 DB 접촉</text>
+
+  <!-- ============ Panel 2: request p95 vs SLO ============ -->
+  <text x="36" y="350" font-size="14.5" font-weight="640" fill="#ffffff">요청 p95 · SLO(500ms) 대비</text>
+  <circle cx="560" cy="346" r="4.5" fill="#0ca30c"/>
+  <text x="744" y="350" font-size="12.5" font-weight="660" fill="#0ca30c" text-anchor="end">on 통과 · off 축 밖</text>
+
+  <!-- tags above track -->
+  <text x="92" y="374" font-size="12" font-weight="660" fill="#3987e5" text-anchor="middle">on · reserve 28ms</text>
+  <text x="564" y="374" font-size="11" font-weight="640" fill="#ec835a" text-anchor="middle">SLO 500ms</text>
+
+  <!-- meter track (0–600ms) -->
+  <rect x="36" y="382" width="634" height="14" rx="7" fill="#2c2c2a"/>
+  <rect x="36" y="382" width="30" height="14" rx="7" fill="#3987e5"/>
+  <!-- SLO marker -->
+  <line x1="564" y1="376" x2="564" y2="402" stroke="#ec835a" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- before off-scale -->
+  <text x="744" y="386" font-size="12" font-weight="600" fill="#d3d7de" text-anchor="end">↗ off · 22s</text>
+  <text x="744" y="401" font-size="11" fill="#898781" text-anchor="end">축 밖 · 붕괴</text>
+
+  <text x="36" y="420" font-size="11.5" fill="#898781">눈금 0–600ms · off p95 22s는 포화 구간값이라 절대치 무의미(신호 = 붕괴)</text>
+
+  <!-- ============ footer ============ -->
+  <line x1="36" y1="440" x2="744" y2="440" stroke="#2c2c2a" stroke-width="1"/>
+  <text x="36" y="460" font-size="11" fill="#898781"><tspan font-weight="640" fill="#b8bdc7">측정</tspan>  ramping-arrival-rate RATE=500·churn · 스케줄 20 · dropped 38k→0 · VU 2,000→~101 · server_errors 0 · consistency 0 · 3회 (§T4-9)</text>
+  <text x="36" y="479" font-size="11" fill="#898781"><tspan font-weight="640" fill="#ec835a">정직한 한계</tspan>  off는 5xx 대신 dropped·22s-p95로 붕괴 — open-loop 커넥션 큐잉(prod accept-count 초과 시 5xx 전조). 정합성은 입장제어와 무관</text>
+</svg>

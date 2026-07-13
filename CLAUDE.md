@@ -78,6 +78,11 @@ gradle build --no-daemon  # wrapper JAR 없을 때
 
 # 실행 가능한 JAR 생성
 ./gradlew bootJar
+
+# 생성된 JAR 직접 실행 — JDK 25 필요(산출물은 class file 69).
+#   JDK 25 탐색은 $HOME/.jdks 우선. 못 찾으면 ./gradlew -q javaToolchains 로 위치 확인.
+JAVA_HOME="$(find "$HOME/.jdks" -maxdepth 1 -iname '*25*' -type d 2>/dev/null | head -1)" \
+  "$JAVA_HOME/bin/java" -jar build/libs/ktx-ticketing-be-0.0.1-SNAPSHOT.jar
 ```
 
 > **Gradle wrapper 초기화**: `gradle-wrapper.jar` 는 바이너리라 별도 초기화 필요.
@@ -102,6 +107,9 @@ gradle build --no-daemon  # wrapper JAR 없을 때
 
 작업 순서: **Task 추출 → 실행 계획 작성 → 사람 검토·승인 → 소단위 구현 반복(코드→테스트→커밋 승인→커밋) → Phase 결과 보고서 → 체크리스트 완료 처리**
 
+- **작업 시작 시 `docs/KTX_Ticketing_Task_Checklist.md` 의 🚨 긴급 처리 섹션을 먼저 확인한다.** 미완(`[ ]`/`[~]`) 긴급 task(H-/U- 등)가 있으면, 정규 task(P-) 보다 우선해 처리하거나 최소한 사용자에게 그 존재를 알리고 진행 방향을 확인한다(세션 간 인수인계가 자동으로 읽히지 않으므로).
+- **진행 상황을 파악할 때 in-session task list(TaskList)만 보지 말고 `git log` 커밋 이력도 함께 확인한다.** TaskList 는 세션 내 단기 추적용이라 세션이 바뀌면 비어 있다 — 세션 간에 남는 진짜 진행 상황은 **커밋 이력 + 관련 계획/결과 문서의 진행 로그**(예: `docs/plans/*_Plan.md` §진행 로그, `docs/results/P4_Result.md`)에 있다. "task list 가 비었다 = 할 일이 없다"로 오판하지 말 것. 다단계 작업을 이어받거나 재개할 때는 `git log --oneline` 으로 최근 커밋을 먼저 훑어 어디까지 왔는지 확인한다.
+- **계획은 2단으로 관리한다 — 전체(task_list) + 세부(주간계획).** 전체 계획·진행 현황은 `docs/KTX_Ticketing_Task_Checklist.md`(task_list)로, 특정 주의 세부 실행 계획은 `docs/plans/Weekly_Plan_*.md`(주간계획)로 나눠 관리한다. **주간계획을 마무리한 후에는 그 결과를 반드시 task_list 에 반영한다**(해당 task 상태 `[x]` 갱신 + 진행 현황 요약표 갱신). 주간계획은 세부 실행용이고, 세션 간에 남는 정본 진행 상태는 task_list 이므로 둘을 동기화하지 않으면 진행률이 어긋난다.
 - 계획 승인 없이 구현 시작 금지
 - 커밋 단위·테스트 유효성 규칙은 아래 각 섹션 참조
 
@@ -109,6 +117,14 @@ gradle build --no-daemon  # wrapper JAR 없을 때
 
 - **계획 단계에서 유효성 검토**: 테스트 코드를 작성하기 전, 해당 테스트가 실제로 의미 있는 비즈니스 로직이나 설계 결정을 검증하는지 먼저 확인한다. Java 언어 동작(필드 초기화, getter 등), 프레임워크 동작(H2 vs 실제 DB 불일치), 단순 위임 코드는 테스트 대상이 아니다.
 - **각 task를 검증하는 테스트 추가**: 각 페이즈(P0~P6)의 태스크가 완료될 때 해당 태스크의 핵심 결정이나 로직을 검증하는 테스트를 함께 작성한다. 테스트가 불가능하거나 의미 없는 태스크(설계 문서, Redis 키 설계 등)는 명시적으로 사유를 남긴다.
+
+## 주석 규칙
+
+- **필요한 만큼만**: 코드가 스스로 설명하는 내용(무엇을 하는지)은 주석으로 반복하지 않는다. "왜" 그렇게 했는지(비자명한 결정·함정·우회 사유)만 간결하게 남긴다. 장황한 다중 줄 설명보다 한 줄로 핵심을 적는다.
+
+## 파일 관리 규칙
+
+- **기록 목적으로 legacy 파일을 남기지 말 것**: 더 이상 쓰지 않는 파일(대체된 스크립트·구버전 등)은 "이력 보존"을 이유로 남겨두지 않고 삭제한다. 과거 버전은 git 이 이미 관리하므로(`git log`/`git show`로 언제든 복원·열람 가능) 작업 트리에 중복으로 둘 필요가 없다. 남겨두면 어느 게 현행인지 혼동만 생긴다. 단, 살아있는 참조(README·주석 등)는 삭제와 함께 정리한다.
 
 ## 커밋 규칙
 

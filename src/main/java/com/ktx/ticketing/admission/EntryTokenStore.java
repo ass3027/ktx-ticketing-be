@@ -40,6 +40,7 @@ public class EntryTokenStore {
     }
 
     /** 세션 종료(예매 완료/취소) 시 토큰을 제거한다. {@code true} = 실제로 지워짐. 확정/취소(T3-8)가 호출. */
+    @SuppressWarnings("UnusedReturnValue")
     public boolean revoke(String token) {
         return Boolean.TRUE.equals(redis.delete(key(token)));
     }

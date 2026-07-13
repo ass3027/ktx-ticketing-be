@@ -2,7 +2,14 @@
 -- 사용법: mysql -h127.0.0.1 -uktx -pktx1234 ktx_ticketing 으로 접속 후 실행
 -- :schedule_id, :seat_inventory_id 는 테스트에 사용한 실제 ID 로 치환
 
--- ① 특정 좌석의 HELD/CONFIRMED 건 수 (L1: 1 이어야 함)
+-- L1 합격 단언 (모두 통과해야 oversell = 0):
+--   ① seat_inventory_id=1 의 HELD = 1 AND CONFIRMED = 0
+--   ④ schedule_id=1 의 AVAILABLE = 999 (총 1,000석 - 잡힌 1석)
+--   Redis: SCARD avail:1 = 999 (DB AVAILABLE 수와 일치 = 드리프트 없음)
+--     $ redis-cli SCARD avail:1
+--     $ redis-cli SMEMBERS avail:1 | wc -l   # 동일 결과
+
+-- ① 특정 좌석의 HELD/CONFIRMED 건 수 (L1: HELD=1, 그 외 0 이어야 함)
 SELECT status, COUNT(*) AS cnt
 FROM reservation
 WHERE seat_inventory_id = :seat_inventory_id

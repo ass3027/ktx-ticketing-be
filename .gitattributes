@@ -1,0 +1,18 @@
+# 줄바꿈 정규화 — OS·core.autocrlf 설정과 무관하게 체크아웃 EOL 을 고정한다.
+# 기본: 텍스트 파일은 Git 이 자동 판별하되 저장소에는 LF 로 정규화.
+* text=auto
+
+# Linux 컨테이너에서 실행되는 셸 스크립트는 반드시 LF (CRLF 면 shebang 깨짐).
+*.sh text eol=lf
+
+# Windows 전용 스크립트도 LF 로 통일 (저장소는 이미 전부 LF, PowerShell 7+ 는 LF 실행 OK).
+*.ps1 text eol=lf
+*.bat text eol=lf
+*.cmd text eol=lf
+
+# 바이너리 — 정규화 금지.
+*.jar binary
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary

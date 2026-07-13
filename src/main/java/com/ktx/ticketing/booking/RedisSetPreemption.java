@@ -2,12 +2,18 @@ package com.ktx.ticketing.booking;
 
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.Nullable;
+import org.springframework.data.redis.core.RedisOperations;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -20,7 +26,7 @@ import java.util.stream.Collectors;
  * <p><b>선점 시각 마커(T3-10 reconcile 정합성):</b> 모든 선점(SREM/SPOP)은 좌석별 "마지막 선점 시각"을
  * {@code preempt:ts:{scheduleId}} 해시에 <b>선점과 한 Lua 스크립트로 원자 기록</b>한다. reconcile 잡이
  * "DB는 AVAILABLE인데 Redis Set엔 부재"인 missing 좌석을 가용 풀로 되돌릴(SADD) 때, 이 마커가 최근이면
- * {@code [SREM~커밋]} in-flight 윈도우로 보고 건너뛰어 <b>오버셀</b>을 막는다. (설계: {@code docs/KTX_Ticketing_Reconcile_Design.md} §7)
+ * {@code [SREM~커밋]} in-flight 윈도우로 보고 건너뛰어 <b>오버셀</b>을 막는다. (설계 근거: Reconcile Design 문서 §7)
  * HSET은 실제 선점(SREM/SPOP 성공) 시에만 찍으므로 선점 패자·미존재 좌석은 마커를 갱신하지 않는다.
  */
 @Service
@@ -96,6 +102,33 @@ public class RedisSetPreemption implements SeatPreemption {
     }
 
     @Override
+    public Map<Long, Long> availableCounts(List<Long> scheduleIds) {
+        if (scheduleIds.isEmpty()) {
+            return Map.of();
+        }
+        // 콜백 안의 size() 는 SCARD 를 파이프라인에 큐잉만 하고 null 을 돌려준다. 실제 결과는
+        // executePipelined 가 명령 큐잉 순서대로 List<Object> 로 반환한다(SCARD→Long).
+        // SessionCallback 은 콜백 인자로 템플릿 자신을 넘겨줘 String 키를 그대로 쓸 수 있다
+        // (executePipelined(RedisCallback) 의 connection 은 프록시라 StringRedisConnection 캐스팅 불가).
+        List<Object> sizes = redis.executePipelined(new SessionCallback<Object>() {
+            @Override
+            public <K, V> Object execute(RedisOperations<K, V> operations) {
+                StringRedisTemplate ops = (StringRedisTemplate) operations; // 넘어오는 건 redis 템플릿 자신.
+                for (Long id : scheduleIds) {
+                    ops.opsForSet().size(key(id));
+                }
+                return null; // 파이프라인 규약: 콜백은 반드시 null 반환.
+            }
+        });
+        Map<Long, Long> result = new LinkedHashMap<>(scheduleIds.size());
+        for (int i = 0; i < scheduleIds.size(); i++) { // 결과는 큐잉 순서와 정렬 → index 로 scheduleId 매핑.
+            Object size = sizes.get(i);
+            result.put(scheduleIds.get(i), size == null ? 0L : (Long) size); // SCARD 는 미존재 키도 0.
+        }
+        return result;
+    }
+
+    @Override
     public Set<Long> availableSeatIds(Long scheduleId) {
         Set<String> members = redis.opsForSet().members(key(scheduleId));
         if (members == null || members.isEmpty()) {
@@ -113,6 +146,28 @@ public class RedisSetPreemption implements SeatPreemption {
     public long preemptedAtMillis(Long scheduleId, Long seatInventoryId) {
         Object ts = redis.opsForHash().get(tsKey(scheduleId), seatInventoryId.toString());
         return ts == null ? 0L : Long.parseLong(ts.toString());
+    }
+
+    @Override
+    public Map<Long, Long> preemptedAtMillisAll(Long scheduleId) {
+        Map<Object, Object> entries = redis.opsForHash().entries(tsKey(scheduleId));
+        if (entries.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, Long> result = new HashMap<>(entries.size());
+        for (Map.Entry<Object, Object> e : entries.entrySet()) {
+            result.put(Long.parseLong(e.getKey().toString()), Long.parseLong(e.getValue().toString()));
+        }
+        return result;
+    }
+
+    @Override
+    public void returnSeats(Long scheduleId, Collection<Long> seatInventoryIds) {
+        if (seatInventoryIds.isEmpty()) {
+            return;
+        }
+        String[] ids = seatInventoryIds.stream().map(Object::toString).toArray(String[]::new);
+        redis.opsForSet().add(key(scheduleId), ids);
     }
 
     private String nowMillis() {

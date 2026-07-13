@@ -25,6 +25,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -34,6 +35,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * T3-11: 정합성 자동화 통합 테스트 (M3 DoD = 정상 E2E + 예외 6종).
@@ -207,6 +209,158 @@ class BookingIntegrationTest extends AbstractIntegrationTest {
         assertThat(reservationStatus(reservationId)).isEqualTo(ReservationStatus.EXPIRED);
         assertThat(preemption.availableSeatIds(scheduleId)).contains(targetSeat).hasSize(3);
         assertThat(activeCount()).isZero();
+    }
+
+    // --- T4-13: confirm vs sweep 경합 (오버셀 0 — 벌크화 함정 회귀 가드) ---
+
+    @Test
+    @DisplayName("T4-13 confirm 선행: 이미 확정(SOLD)된 좌석은 만료 시각이 지나도 sweep 이 가용 풀에 반환하지 않는다(오버셀 0)")
+    void confirm된_좌석은_sweep이_가용풀에_반환하지_않는다() {
+        long targetSeat = seatIds.get(0);
+        EntrySession session = enter();
+        long reservationId = ((BookingResult.Success) bookingService.bookSeat(session.userId(), scheduleId, targetSeat))
+                .reservation().getId();
+
+        // 사용자가 만료 전에 확정 → 좌석 SOLD, 예약 CONFIRMED, 가용 풀에서 빠진 상태 유지.
+        lifecycleService.confirm(reservationId, session.userId());
+        assertThat(seatStatus(targetSeat)).isEqualTo(SeatStatus.SOLD);
+
+        // 이후 만료 시각을 넘겨 sweep — expiresAt < now 라 findExpiredHeldIds 가 이 행을 조회할 수 있으나,
+        // expire() 의 상태 재확인(status != HELD → null)이 CONFIRMED 행을 no-op 처리한다.
+        // 벌크 UPDATE + SELECT 결과로 부수효과를 돌렸다면 SOLD 좌석이 avail 로 새어 오버셀이 났을 지점.
+        mutableClock.advance(Reservation.HELD_TTL.plusSeconds(60));
+        heldExpiryService.sweep();
+
+        assertThat(seatStatus(targetSeat)).as("SOLD 좌석은 그대로").isEqualTo(SeatStatus.SOLD);
+        assertThat(reservationStatus(reservationId)).as("확정은 만료로 뒤집히지 않는다").isEqualTo(ReservationStatus.CONFIRMED);
+        assertThat(preemption.availableSeatIds(scheduleId))
+                .as("SOLD 좌석은 가용 풀에 반환되지 않는다(오버셀 0)")
+                .doesNotContain(targetSeat);
+    }
+
+    @Test
+    @DisplayName("T4-13 동시 경합: 같은 HELD 예약에 confirm 과 sweep 을 동시 실행 → @Version 으로 하나만 성공, 좌석 상태 일관(오버셀 0)")
+    void confirm과_sweep_동시경합시_하나만_성공() throws Exception {
+        long targetSeat = seatIds.get(0);
+        EntrySession session = enter();
+        long reservationId = ((BookingResult.Success) bookingService.bookSeat(session.userId(), scheduleId, targetSeat))
+                .reservation().getId();
+
+        // sweep 의 만료 판정 시각이 지나도록 앞당긴다(두 경로가 같은 HELD 행을 동시에 노림).
+        mutableClock.advance(Reservation.HELD_TTL.plusSeconds(60));
+
+        // confirm 과 sweep 을 같은 출발선에서 동시 발사 — @Version 충돌 시 한쪽은 OptimisticLock 으로 실패한다.
+        var start = new java.util.concurrent.CountDownLatch(1);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            java.util.concurrent.Future<Boolean> confirmTask = pool.submit(() -> {
+                start.await();
+                try {
+                    return lifecycleService.confirm(reservationId, session.userId())
+                            instanceof ReservationCommandResult.Success;
+                } catch (Exception e) {
+                    return false; // 경합 패배(OptimisticLock 등) → 확정 실패
+                }
+            });
+            java.util.concurrent.Future<Boolean> sweepTask = pool.submit(() -> {
+                start.await();
+                try {
+                    return heldExpiryService.sweep() >= 1; // 이 행을 만료시켰는지
+                } catch (Exception e) {
+                    return false;
+                }
+            });
+            start.countDown();
+            confirmTask.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            sweepTask.get(10, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
+        }
+
+        // 최종 상태는 CONFIRMED(좌석 SOLD) 또는 EXPIRED(좌석 AVAILABLE) 중 정확히 하나로 일관해야 한다.
+        // 어느 쪽이든 "좌석 SOLD인데 avail 에도 있는" 오버셀은 없어야 한다.
+        ReservationStatus finalStatus = reservationStatus(reservationId);
+        boolean seatInAvail = preemption.availableSeatIds(scheduleId).contains(targetSeat);
+        if (finalStatus == ReservationStatus.CONFIRMED) {
+            assertThat(seatStatus(targetSeat)).isEqualTo(SeatStatus.SOLD);
+            assertThat(seatInAvail).as("SOLD 인데 가용 풀에도 있으면 오버셀").isFalse();
+        } else {
+            assertThat(finalStatus).as("승자는 confirm 또는 sweep 둘 중 하나").isEqualTo(ReservationStatus.EXPIRED);
+            assertThat(seatStatus(targetSeat)).isEqualTo(SeatStatus.AVAILABLE);
+            assertThat(seatInAvail).as("만료 좌석은 가용 풀로 정확히 1회 반환").isTrue();
+        }
+    }
+
+    // --- B-2: 되돌아온 좌석 재예매 (활성 한정 부분 유니크) ---
+
+    @Test
+    @DisplayName("B-2 취소 후 재예매: 취소로 되돌아온 좌석을 같은 좌석으로 다시 예매하면 성공(과거엔 전역 유니크로 500)")
+    void cancel_후_같은좌석_재예매_성공() {
+        long targetSeat = seatIds.get(0);
+
+        EntrySession first = enter();
+        long firstResId = ((BookingResult.Success) bookingService.bookSeat(first.userId(), scheduleId, targetSeat))
+                .reservation().getId();
+        lifecycleService.cancel(firstResId, first.userId()); // 좌석 AVAILABLE + avail 복귀
+
+        // 같은 좌석 재예매: 전역 유니크였다면 reservation INSERT 가 Duplicate entry → 500.
+        // 부분 유니크(취소 행은 active=NULL)에서는 공존 가능 → 정상 HELD.
+        EntrySession second = enter();
+        BookingResult rebooked = bookingService.bookSeat(second.userId(), scheduleId, targetSeat);
+
+        assertThat(rebooked).isInstanceOf(BookingResult.Success.class);
+        long secondResId = ((BookingResult.Success) rebooked).reservation().getId();
+        assertThat(secondResId).isNotEqualTo(firstResId); // 새 예약 행
+        assertThat(seatStatus(targetSeat)).isEqualTo(SeatStatus.HELD);
+        assertThat(reservationStatus(firstResId)).isEqualTo(ReservationStatus.CANCELLED);
+        assertThat(reservationStatus(secondResId)).isEqualTo(ReservationStatus.HELD);
+    }
+
+    @Test
+    @DisplayName("B-2 만료 후 재예매: HELD 만료 sweep 으로 되돌아온 좌석을 다시 예매하면 성공")
+    void expiry_후_같은좌석_재예매_성공() {
+        long targetSeat = seatIds.get(0);
+
+        EntrySession first = enter();
+        long firstResId = ((BookingResult.Success) bookingService.bookSeat(first.userId(), scheduleId, targetSeat))
+                .reservation().getId();
+        mutableClock.advance(Reservation.HELD_TTL.plusSeconds(60));
+        heldExpiryService.sweep(); // 좌석 AVAILABLE + avail 복귀, 예약 EXPIRED
+
+        EntrySession second = enter();
+        BookingResult rebooked = bookingService.bookSeat(second.userId(), scheduleId, targetSeat);
+
+        assertThat(rebooked).isInstanceOf(BookingResult.Success.class);
+        assertThat(reservationStatus(firstResId)).isEqualTo(ReservationStatus.EXPIRED);
+        assertThat(reservationStatus(((BookingResult.Success) rebooked).reservation().getId()))
+                .isEqualTo(ReservationStatus.HELD);
+    }
+
+    @Test
+    @DisplayName("B-2 불변식 유지: 한 좌석에 '활성' 예약 2건은 부분 유니크(uk_active_seat)가 차단")
+    void 한좌석_활성예약_2건은_차단된다() {
+        // 서비스 경로는 Redis 선점(SREM)이 승자 1명만 통과시켜 DB 까지 2건이 못 간다.
+        // 부분 유니크 제약 자체가 살아있는지(회귀 가드)만 보려면 DB write 를 직접 두 번 시도해야 한다.
+        // 좌석 상태/version 과 무관하게 reservation 의 제약만 때리려고 native INSERT 로 같은 좌석 활성 2건을 넣는다
+        // (Reservation.hold 는 좌석까지 markHeld 하므로 좌석 제약과 섞임 → 순수 검증엔 부적합).
+        long targetSeat = seatIds.get(0);
+        EntrySession s1 = enter();
+        bookingService.bookSeat(s1.userId(), scheduleId, targetSeat); // 활성 HELD 1건 (active = targetSeat)
+        long otherUserId = enter().userId();
+
+        // em 직접 실행이라 Spring 예외 변환 계층(@Repository)을 안 거쳐 Hibernate 원본 예외가 나온다.
+        // 검증의 본질은 "uk_active_seat 가 같은 좌석 활성 2건을 막는다"이므로 메시지로 제약명을 단언한다.
+        assertThatThrownBy(() -> tx.executeWithoutResult(status ->
+                em.createNativeQuery("""
+                        INSERT INTO reservation(user_id, seat_inventory_id, status, held_at, expires_at)
+                        VALUES (?1, ?2, 'HELD', NOW(), NOW())
+                        """)
+                        .setParameter(1, otherUserId)
+                        .setParameter(2, targetSeat)
+                        .executeUpdate()))
+                .as("같은 좌석 활성 2건째는 uk_active_seat 위반")
+                .isInstanceOf(ConstraintViolationException.class)
+                .hasMessageContaining("uk_active_seat");
     }
 
     // --- §3.1 매진 / 이미 선점된 좌석 시도 ---

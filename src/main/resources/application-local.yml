@@ -1,9 +1,9 @@
 # 로컬 개발 전용 프로파일 — docker compose up mysql redis 후 IDE에서 실행
+# 스키마는 Flyway 가 관리(메인 application.yml). 로컬도 동일하게 ddl-auto: validate 를 상속하므로
+# 여기서 ddl-auto 를 재정의하지 않는다(예전 update 는 Flyway 와 충돌 → 제거).
 spring:
   jpa:
-    hibernate:
-      ddl-auto: update
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
         jdbc:

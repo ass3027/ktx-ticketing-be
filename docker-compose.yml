@@ -12,21 +12,67 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       SPRING_PROFILES_ACTIVE: local
+      # tz 통일(B-1) — JVM·MySQL·JDBC(serverTimezone=Asia/Seoul) 를 모두 KST 로 못박아 naive
+      # LocalDateTime 의 저장·비교 tz 를 일치시킨다. KTX(단일 리전)라 운행시각(KST 벽시계)과도 정합.
+      # (이전엔 JVM=OS기본 KST / MySQL 세션=UTC 불일치로 9h skew → expiresAt 만료 오판, U-2 audit 검출.)
+      TZ: Asia/Seoul
+      # 입장 제어 상한 K — 잠정 기본 100. 부하측정(L1 등)에선 환경변수로 우회:
+      #   $env:BOOKING_ADMISSION_MAX_ACTIVE=2000 후 docker compose up.
+      # base 기본값으로 둬 모든 compose 조합(-f ... -f k6.yml 포함)이 동일 app 정의를
+      # 갖게 한다 → `docker compose run` 이 app 을 재생성하는 트리거(조합 불일치)를 없앤다.
+      BOOKING_ADMISSION_MAX_ACTIVE: ${BOOKING_ADMISSION_MAX_ACTIVE:-100}
+      # 만료 sweep 설정 — T4-13 Before/After 측정용 env 우회(admission 과 동일 패턴, 기본=운영값=After).
+      # Before 재현 시: BATCH_SIDE_EFFECTS=false BATCH_SIZE=100 SWEEP_INTERVAL=30s (yml 수정·재빌드 없이 토글).
+      BOOKING_EXPIRY_BATCH_SIDE_EFFECTS: ${BOOKING_EXPIRY_BATCH_SIDE_EFFECTS:-true}
+      BOOKING_EXPIRY_BATCH_SIZE: ${BOOKING_EXPIRY_BATCH_SIZE:-1000}
+      BOOKING_EXPIRY_SWEEP_INTERVAL: ${BOOKING_EXPIRY_SWEEP_INTERVAL:-2s}
+      # HikariCP 풀 크기 — T4-5 ① 측정용 env 토글(기본 10=Before). 재빌드 없이 pool 상향 실험.
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+      # 조회 SCARD 를 tx 밖에서 수행할지 — T4-5 ② 측정용 env 토글(기본 false=Before, SCARD 가 tx 안).
+      # true 로 두면 DB 커넥션이 Redis 왕복을 감싸지 않아 usage(점유시간) 단축. 재빌드 없이 토글.
+      BOOKING_QUERY_REDIS_OUTSIDE_TX: ${BOOKING_QUERY_REDIS_OUTSIDE_TX:-false}
+      # 조회 SCARD 를 파이프라인 1회 왕복으로 묶을지 — T4-5 ③ 측정용 env 토글(기본 false=Before, 직렬 N회).
+      # true 로 두면 RTT×N → RTT×1. ②와 독립 토글. 재빌드 없이 flip.
+      BOOKING_QUERY_PIPELINE: ${BOOKING_QUERY_PIPELINE:-false}
+      # 조회 단기 캐시 on/off — T4-5 ④(=E3) 측정용 env 토글(기본 false=Before). true=cache on(A4/C4).
+      # 히트 시 DB/SCARD 소거. 재빌드 없이 flip 해 E3 Before/After 대조.
+      BOOKING_QUERY_CACHE_ENABLED: ${BOOKING_QUERY_CACHE_ENABLED:-false}
+      # TTL 지터 폭(0~1) — 다중 키 동시 만료 스파이크 완화(T4-5 ④). 기본 0=고정 TTL. 재빌드 없이 flip.
+      BOOKING_QUERY_CACHE_TTL_JITTER: ${BOOKING_QUERY_CACHE_TTL_JITTER:-0}
+      # 좌석 선점(SREM) 게이트 on/off — T4-9 E1 측정용 env 토글(기본 true=프로덕션·After).
+      # false=E1 Before(SREM 우회 → 모든 요청이 DB 로 내려가 @Version/uk_active_seat 로만 방어). 재빌드 없이 flip.
+      BOOKING_PREEMPTION_ENABLED: ${BOOKING_PREEMPTION_ENABLED:-true}
+    # AOT 캐시 영속화 — 컨테이너 재생성(force-recreate)에도 보존해 재 dump(~10s) 회피.
+    # entrypoint 가 jar 변경 시 자동 무효화하므로 코드 변경 시엔 재 dump 된다.
+    volumes:
+      - aot_cache:/app/aot
     depends_on:
       mysql:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # JRE 이미지엔 curl/wget/nc 가 없어 bash 내장 /dev/tcp 로 actuator health 를 친다.
+    # CMD-SHELL 은 /bin/sh 라 /dev/tcp(bash 전용)가 안 되므로 반드시 bash 로 실행한다.
+    # 의존 서비스(k6)가 condition: service_healthy 로 app 의 *준비 완료*를 기다리게 해
+    # 수동 health 폴링·`run --no-deps` 없이도 부하 도구가 준비된 app 에만 붙도록 한다.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8080 && printf 'GET /actuator/health HTTP/1.0\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '\"status\":\"UP\"'"]
+      interval: 5s
+      timeout: 4s
+      retries: 30
+      start_period: 20s
 
   mysql:
     image: mysql:8.0
     ports:
-      - "3306:3306"
+      - "3308:3306"
     environment:
       MYSQL_ROOT_PASSWORD: root1234
       MYSQL_DATABASE: ktx_ticketing
       MYSQL_USER: ktx
       MYSQL_PASSWORD: ktx1234
+      # 컨테이너 OS tz 를 KST 로 → MySQL 세션 tz(SYSTEM)도 KST. app/JDBC 와 통일(B-1).
+      TZ: Asia/Seoul
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -48,3 +94,4 @@ services:
 
 volumes:
   mysql_data:
+  aot_cache:

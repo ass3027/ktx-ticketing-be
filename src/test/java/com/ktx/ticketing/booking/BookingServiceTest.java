@@ -37,10 +37,16 @@ class BookingServiceTest {
 
     @BeforeEach
     void setUp() {
+        bookingService = newBookingService(true); // 기본: 선점 on(프로덕션)
+    }
+
+    /** 선점 토글(T4-9 E1)을 바꿔가며 조립 — enabled=false 는 SREM 우회 경로 검증용. */
+    private BookingService newBookingService(boolean preemptionEnabled) {
         Clock fixedClock = Clock.fixed(
                 FIXED_NOW.atZone(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
-        bookingService = new BookingService(
-                preemption, seatInventoryRepository, reservationRepository, userRepository, fixedClock);
+        return new BookingService(
+                preemption, new PreemptionProperties(preemptionEnabled),
+                seatInventoryRepository, reservationRepository, userRepository, fixedClock);
     }
 
     @Test
@@ -96,6 +102,21 @@ class BookingServiceTest {
         assertThat(bookingService.bookAuto(USER_ID, SCHEDULE_ID))
                 .isInstanceOf(BookingResult.SoldOut.class);
         verifyNoInteractions(reservationRepository, seatInventoryRepository, userRepository);
+    }
+
+    @Test
+    void bookSeat_선점_off면_SREM_건너뛰고_바로_HELD_점유() {
+        // T4-9 E1 Before: 선점(SREM) 우회 → tryPreemptSeat 호출 없이 DB 상태전이로 직행(@Version 이 최종 방어).
+        BookingService noPreemption = newBookingService(false);
+        SeatInventory inventory = mock(SeatInventory.class);
+        when(userRepository.getReferenceById(USER_ID)).thenReturn(new User("test@ktx.com", "홍길동"));
+        when(seatInventoryRepository.findById(SEAT_INVENTORY_ID)).thenReturn(Optional.of(inventory));
+
+        BookingResult result = noPreemption.bookSeat(USER_ID, SCHEDULE_ID, SEAT_INVENTORY_ID);
+
+        assertThat(result).isInstanceOf(BookingResult.Success.class);
+        verify(preemption, never()).tryPreemptSeat(any(), any());
+        verify(inventory).markHeld(FIXED_NOW);
     }
 
     @Test
