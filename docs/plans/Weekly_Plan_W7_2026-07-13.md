@@ -55,7 +55,7 @@ README(문제정의·아키텍처·트레이드오프·성능 그래프) + 다�
 ## 5. 주간 DoD (Definition of Week-done)
 
 - [x] B-4 시드 출발일 상대날짜화 — 완료(07/13, `fix/b-4-seed-relative-date`): 코드 3곳 + 런타임 검증(시드창 07/14~·avail 50·SCARD 1000·k6 FROM_DATE 일치·L1 `reserve_ok=1`×3·오버셀 0)
-- [ ] T6-2 아키텍처/시퀀스 다이어그램 이미지 확보 (README 임베드 가능)
+- [x] T6-2 아키텍처/시퀀스 다이어그램 이미지 확보 — 완료(07/14): Mermaid→SVG 3장(아키텍처·happy path·동시성 경합), 투명배경·글자색 고침, `docs/images/architecture.md` 임베드
 - [ ] T6-1 README 완성 — 문제정의·아키텍처·기술선택·트레이드오프·성능 그래프(E1·E2·E3) + C1·C2·C6 충족
 - [ ] T6-4 동작 영상(정상 흐름) 확보
 - [ ] T6-5 동작 영상(동시성 oversell=0 시연 + 부하 결과) 확보 — 핵심 셀링포인트

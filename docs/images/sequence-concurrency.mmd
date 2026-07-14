@@ -1,0 +1,21 @@
+%%{init: {"theme":"default","themeVariables":{"fontSize":"22px","fontFamily":"Malgun Gothic, Segoe UI, sans-serif","actorFontSize":"22px","noteFontSize":"20px","messageFontSize":"20px"},"sequence":{"actorMargin":110,"width":190,"boxMargin":14,"noteMargin":12,"messageMargin":40}}}%%
+sequenceDiagram
+    autonumber
+    participant U1 as U_승자 (1명)
+    participant U999 as U_패자 (999명)
+    participant RP as RP (avail Set)
+    participant DB as DB (@Version 낙관락)
+
+    par 1,000명 동시 요청 (mode=SEAT 12A)
+        U1->>RP: SREM avail {12A}
+        RP-->>U1: 1 (선점 성공)
+    and
+        U999->>RP: SREM avail {12A}
+        RP-->>U999: 0 (이미 선점됨)
+    end
+
+    U1->>DB: AVAILABLE→HELD (version 체크)
+    DB-->>U1: 커밋 성공 → 예매 성공
+    Note over U999: SREM=0 → 즉시 409 반려<br/>(DB 미접촉 = 부하 흡수)
+
+    Note over RP,DB: 선점이 원자적이라 CONFIRMED ≤ 가용 좌석 수<br/>초과 판매 0건 · 중복 0건 (S4, M2 리스크 게이트)

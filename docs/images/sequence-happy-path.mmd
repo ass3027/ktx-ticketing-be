@@ -1,0 +1,39 @@
+%%{init: {"theme":"default","themeVariables":{"fontSize":"22px","fontFamily":"Malgun Gothic, Segoe UI, sans-serif","actorFontSize":"22px","noteFontSize":"20px","messageFontSize":"20px"},"sequence":{"actorMargin":90,"width":170,"boxMargin":14,"noteMargin":12,"messageMargin":40}}}%%
+sequenceDiagram
+    autonumber
+    actor U as 사용자
+    participant API as API 서버
+    participant RC as RC (잔여/캐시)
+    participant RA as RA (활성자)
+    participant RP as RP (avail Set)
+    participant DB as DB (SoT)
+    participant MQ as MQ (비동기)
+
+    U->>API: 운행 조회 (서울→부산)
+    API->>RC: 잔여수/매진 조회
+    RC-->>API: 카운터 (약한 일관성)
+    API-->>U: 운행 리스트 + 잔여 N석/매진
+
+    U->>API: 입장 요청
+    API->>RA: 활성 < K ? (INCR)
+    RA-->>API: 허용 (활성 +1)
+    API-->>U: EntryToken 발급 (TTL)
+
+    U->>API: 예매 (EntryToken, mode=SEAT 12A / AUTO)
+    alt SEAT (직접 선택)
+        API->>RP: SREM avail {12A}
+        RP-->>API: 1 = 선점 성공
+    else AUTO (자동 배정)
+        API->>RP: SPOP avail
+        RP-->>API: 임의 좌석 획득
+    end
+    API->>DB: 좌석 AVAILABLE→HELD (@Version 낙관락)
+    DB-->>API: 커밋 성공
+    API->>RC: 잔여 -1 동기화
+    API-->>U: 예매 성공 (HELD, +5분 마감)
+
+    U->>API: 결제 확정
+    API->>DB: HELD→SOLD, Reservation CONFIRMED
+    API->>RA: 활성 -1 (세션 종료)
+    API->>MQ: 예매확정 이벤트 (알림/통계)
+    API-->>U: 예매 완료

@@ -1,0 +1,40 @@
+%%{init: {"theme":"default","themeVariables":{"fontSize":"22px","fontFamily":"Malgun Gothic, Segoe UI, sans-serif"},"flowchart":{"nodeSpacing":60,"rankSpacing":80,"padding":16}}}%%
+flowchart TB
+    U["사용자 (Client)"]
+
+    subgraph API["API 서버 (Spring Boot)"]
+        ADM["AdmissionService<br/>입장 제어 (상한 K)"]
+        BOOK["BookingService<br/>선점 후 DB 상태전이"]
+        QRY["ScheduleQueryService<br/>조회·매진 표시"]
+        SCH["HeldExpiryService (SCH)<br/>HELD TTL 만료 sweep"]
+        REC["ReconciliationService<br/>Redis↔DB 재동기화"]
+    end
+
+    subgraph REDIS["Redis 7 (빠른 게이트 · 약한 일관성)"]
+        RA["RA: 활성자 카운터<br/>active:{schedule} — INCR/DECR"]
+        RP["RP: 가용 좌석 Set<br/>avail:{schedule} — SREM/SPOP"]
+        RC["RC: 잔여 카운터 · 조회 캐시"]
+        RL["RL: 분산 락 (Redisson)<br/>DB 임계영역 보호 / E1·E6 비교"]
+    end
+
+    DB[("MySQL 8 (SoT · 강한 일관성)<br/>Schedule / SeatInventory / Reservation<br/>@Version 낙관락 · uk_active_seat")]
+
+    U -->|"조회 (약한 일관성, staleness ≤ 2s)"| QRY
+    U -->|"입장 요청"| ADM
+    U -->|"예매 (EntryToken 보유)"| BOOK
+
+    QRY -.->|"카운터/캐시 읽기"| RC
+    ADM -->|"활성 < K? INCR"| RA
+    BOOK -->|"① 원자 선점 SREM/SPOP"| RP
+    BOOK -->|"② 상태전이 (강한 일관성)"| DB
+    BOOK -.->|"(선택) 임계영역 보호"| RL
+    BOOK -.->|"③ 잔여 -1 동기화"| RC
+
+    SCH -->|"만료 HELD → AVAILABLE"| DB
+    SCH -.->|"좌석 반환 SADD · 잔여 +1"| RP
+    REC ==>|"부하 후 Redis 를 DB 로 수렴"| DB
+
+    classDef sot fill:#e8f0fe,stroke:#1a56db,stroke-width:2px,color:#111;
+    classDef redis fill:#fde8e8,stroke:#c81e1e,color:#111;
+    class DB sot;
+    class RA,RP,RC,RL redis;
