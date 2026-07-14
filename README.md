@@ -71,6 +71,28 @@ KTX 예매의 본질 난제는 "같은 좌석 동시 점유 제어"이므로, **
 
 > **이중 방어선**: ① Redis `SREM` 원자 선점이 패배 999건을 DB 앞단에서 즉시 반려(부하 흡수), ② DB `@Version` 낙관락 + `uk_active_seat`가 최종 정합성 방어. 선점을 꺼도(E1 Before) 오버셀은 0 — 선점의 값은 *정확성*이 아니라 *처리 비용*이다(아래 E1 실험).
 
+#### 실측 증거 — 부하 전 1,000석 → 1,000명 동시 → 성공 1건 → 부하 후 999석
+
+> L1 시나리오(단일 좌석 1,000 VU 동시 경쟁)를 냉간 1회 실행한 실측. 위 시퀀스가 설계라면, 아래는 그 설계가 실제로 oversell=0 을 지킨 물증이다.
+
+**① 부하 전** — Redis 선점 풀에 좌석 1,000석 적재 완료(깨끗한 출발선):
+
+![부하 전 SCARD avail:1 = 1000](docs/images/evidence/S1-redis_scard_1000.png)
+
+**② 부하 발사** — 컨테이너 k6 로 1,000 VU 가 같은 좌석을 동시 공격(호스트 k6 의 NAT 오염 회피):
+
+![k6 L1 발사 — 1,000 VU 단일좌석 경쟁 시나리오 로드](docs/images/evidence/S2-k6-start.png)
+
+**③ k6 결과** — 성공 정확히 1건, 진짜 1,000 동시(`http_reqs=2000`), 5xx 누수 0, 정합성 audit 통과:
+
+![k6 summary — reserve_ok=1 · consistency_violation=0 · http_req_failed=0% · http_reqs=2000](docs/images/evidence/S3-k6-result.png)
+
+**④ DB · Redis 사후 검증** — SoT(DB)에서 HELD=1·중복 0·AVAILABLE 999·만료잔재 0, Redis `SCARD=999`(드리프트 0):
+
+![부하 후 정합성 — DB: HELD 1/중복 0/AVAILABLE 999/만료 0, Redis SCARD avail:1 = 999](docs/images/evidence/S4-db-redis-consistency.png)
+
+> **1000 → 999, 정확히 −1.** k6 요약(성공 1건)과 DB·Redis 실측(999석 잔존)이 교차 검증돼 **초과 판매 0건·중복 0건**(S4·M2 리스크 게이트)이 애플리케이션과 스토리지 양쪽에서 증명된다.
+
 ---
 
 ## SLO (검증 목표)
@@ -222,8 +244,8 @@ docker compose up mysql redis
 | README (문제정의·아키텍처·트레이드오프·성능) | ✅ 문제정의·아키텍처·트레이드오프·전 실험(E1~E3)·SLO 수치·E1~E3 차트·아키텍처/시퀀스 다이어그램 반영 | — |
 | 배포 URL | ⬜ 미착수 (차단 시 영상으로 보완) | T6-3 |
 | 아키텍처/시퀀스 다이어그램 이미지 | ✅ 완료 (아키텍처 + 예매 happy path + 동시성 경합, `docs/images/`) | T6-2 |
-| 동작 영상 — 정상 흐름 | ⬜ 미착수 | T6-4 |
-| 동작 영상 — 동시성 시연 + 부하 결과 | ⬜ 미착수 | T6-5 |
+| 동작 증거 — 정상 흐름 | ✅ Swagger UI 라이브 데모로 대체 (`/swagger-ui.html`, 조회→입장→예매→확정→취소 직접 호출) | T6-3a/T6-4 |
+| 동작 증거 — 동시성 oversell=0 + 부하 결과 | ✅ 스크린샷 서사 4장(1000→발사→성공1건→999) 임베드, 위 "실측 증거" 절 | T6-5 |
 
 > 문제정의·아키텍처·기술선택 근거·트레이드오프·SLO 측정치(E1~E3 Before/After 그래프)·다이어그램이
 > 모두 반영된 상태다. 남은 결과물은 배포 URL(T6-3, 차단 시 영상 보완)과 동작 영상(T6-4·T6-5)이다.
