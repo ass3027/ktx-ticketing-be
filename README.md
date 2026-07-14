@@ -108,8 +108,9 @@ KTX 예매의 본질 난제는 "같은 좌석 동시 점유 제어"이므로, **
 | S6 | 임계점 | 시스템이 무너지는 동시 사용자 수를 숫자로 파악 | "어디서 무너지는가" | **safe 예매 ~150 TPS·천장 ~189 TPS → K=100 확정 ✅** (L5b) |
 
 > 측정값은 [docs/results/P4_Result.md](docs/results/P4_Result.md)의 실측 인용. **L1~L6 부하 시나리오와 필수
-> 실험 E1·E2·E3 의 Before/After 짝이 모두 완료**됐다. 기준값은 1차 측정 후 보정하며, 중요한 건 **"왜 이
-> 값인가"를 설명할 수 있는 것**. (시나리오 L1~L6: [docs](docs/KTX_Ticketing_Architecture_and_Verification_Goals.md))
+> 실험 E1·E2·E3 의 Before/After 짝이 모두 완료**됐다. 기준값은 업계 레퍼런스(Google SRE 등)를 참조해
+> 직접 정의한 뒤 실측으로 검증했으며, 핵심은 숫자 크기가 아니라 **"왜 이 값인가"를 설명할 수 있는 것**이다.
+> (시나리오 L1~L6: [docs](docs/KTX_Ticketing_Architecture_and_Verification_Goals.md))
 >
 > **조회 p95 개선은 측정이 드러낸 설계 이슈를 정면 해결한 결과** — L2 혼합부하에서 드러난 조회 지연(~0.9s)을
 > 2-tier 일관성 모델의 조회 캐시(E3)로 우회해 **핫키 p95 26ms(SLO 통과)**를 달성했다("측정 후 최적화" 원칙,
@@ -231,6 +232,21 @@ docker compose up mysql redis
 ```
 
 > 통합 테스트는 Testcontainers가 MySQL/Redis를 자동 기동하므로 로컬 인프라가 떠 있지 않아도 된다 (Docker 데몬은 필요).
+
+### 부하 테스트 (oversell=0 재현)
+
+이 프로젝트의 핵심 증거는 부하 테스트로 재현한다. **L1(단일 좌석 1,000 동시 경쟁)이 가장 중요** — 정합성 게이트다. 실행은 **컨테이너 k6 러너**(`Run-Scenario-Container.ps1`)로 한다 — reset+재시드+health+k6+정합성 audit 을 1회 흐름으로 처리한다.
+
+```powershell
+# 앱+MySQL+Redis 기동 후, 정합성 검증(L1)부터. -PostRunCheck 로 부하 후 DB·Redis audit 동반.
+pwsh load-tests/scripts/Run-Scenario-Container.ps1 `
+  -Scenario load-tests/scenarios/L1_single_seat_race.js -PostRunCheck -Iterations 1
+#   → reserve_ok=1 · consistency_violation=0 · oversell 0 (부하 전 SCARD 1000 → 후 999)
+
+# 다른 시나리오도 -Scenario 만 교체 (L2 정상 혼합 부하 / L4 입장 제어 초과=E2 등)
+```
+
+> **호스트 k6 가 아니라 컨테이너 k6 로 실행**해야 한다 — 호스트 k6 는 Windows NAT 포화로 연결 거부가 섞여 "진짜 1,000 동시" 전제가 깨진다(이 트러블슈팅 자체가 딜리버러블). 러너가 same-network 컨테이너 k6 로 이를 우회한다. 시나리오·러너·트러블슈팅 상세: [load-tests/README.md](load-tests/README.md).
 
 ---
 
