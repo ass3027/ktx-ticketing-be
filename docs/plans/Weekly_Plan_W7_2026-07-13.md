@@ -60,7 +60,7 @@ README(문제정의·아키텍처·트레이드오프·성능 그래프) + 다�
 - [~] T6-4 정상 흐름(영상 대체) — Swagger UI 라이브 데모로 갈음(T6-3a `/swagger-ui.html`). 잔여(선택): Swagger 응답 정지 캡처(S7)
 - [x] T6-5 동시성 스크린샷 세트 확보(영상 대체) — 완료(07/14): S1~S4(`docs/images/evidence/`) README 임베드. 1000→발사→성공1건→999 서사, DB·Redis 교차검증 oversell=0. 핵심 셀링포인트. S5(Grafana) 선택 미확보, S6(E1~E3)=기존 재사용
 - [x] T6-3a Swagger UI(`/swagger-ui.html`) 노출 — 완료(07/14): springdoc 3.0.3(Boot4 전용), X-Entry-Token 글로벌 보안 스킴, /internal 제외, 런타임 검증(api-docs 200·5엔드포인트·UI 렌더)
-- [ ] T6-3b 배포 URL 시도(백엔드 단독 + Swagger) — 확보 시 링크, 차단 시 스크린샷 보완 + 사유 기록
+- [x] T6-3b 배포 URL — **의도적 생략 결정**(07/14): 핵심 증거(oversell=0) UI 재현 불가 → 부하+audit 스크린샷·Swagger 라이브로 갈음. FE 없는 배포는 실익 낮음. 근거 README 명시(C2·C6). 개발계획 `Should`+"스크린샷 보완" 방침 준수
 - [x] T6-6 셀프 체크리스트 C1~C7 점검 완료 — 완료(07/14): 6/7 충족, C3만 부분 미달(배포·스크린샷 증거 대기). 변별력 강점=C4(AI 게이트)·C7(E1 정직 서술)
 - [ ] T6-7 최종 점검 + 제출 → **M5 완결(제출 가능)**
 - [ ] `KTX_Ticketing_Task_Checklist.md` T6-1~T6-7 `[x]` + 진행 현황 요약표 갱신
