@@ -99,7 +99,9 @@
 ## P6. 산출물 & 마무리 → 🏁 M5
 - [x] **T6-1** README: 문제정의·아키텍처·기술선택 이유·트레이드오프·성능 그래프 **완료**(2026-07-14). 문제정의(왜 이 문제)·핵심목표·아키텍처 결정(Redis 동기 vs MQ 트레이드오프 표)·핵심 메커니즘·SLO S1~S6 실측 인용·Before/After 실험 E1~E3(SVG 그래프 임베드)·AI 활용 워크플로우·차별점 서술. T6-2 다이어그램 3장(아키텍처+happy path+동시성 경합) 반영으로 ASCII 논리도 대체. 평가기준 C1(문제정의)·C2(트레이드오프)·C6(기술선택 근거) 충족. 잔여 결과물=배포 URL(T6-3)·영상(T6-4/5).
 - [x] **T6-2** 아키텍처/시퀀스 다이어그램 이미지화 **완료**(2026-07-14). Mermaid `.mmd` 소스 → mmdc SVG 렌더 3장: ① 시스템 아키텍처(2-tier 일관성·단일 원자 선점점 `avail` Set·입장 제어 K·SoT=DB·reconcile) ② 예매 happy path 시퀀스 ③ 동시성 경합 시퀀스(1,000명→SREM 1승/999패→oversell 0). 배경 투명(라이트/다크 뷰어 대응), `classDef color` 명시로 노드 글자 가시성 확보. `docs/images/architecture.md` 에 임베드(README 재사용 진입점). 연관: T6-1(README 아키텍처 절 의존).
-- [ ] **T6-3** 배포(URL) — 차단 시 영상 보완
+- [~] **T6-3** 배포/시연 진입점 — **T6-3a(Swagger UI) 완료**(2026-07-14), T6-3b(배포 URL) 미착수.
+  - **T6-3a** `springdoc-openapi-starter-webmvc-ui:3.0.3`(Boot 4.0 전용 v3.x) 추가 → `/swagger-ui.html` 노출. FE 부재의 대체 시연 진입점. `X-Entry-Token` 을 글로벌 apiKey 보안 스킴으로 등록(UI Authorize) → 예매/확정/취소에 자물쇠, 조회/입장엔 미적용. `/internal/**`(감사용) 문서 제외. **런타임 검증**: `/v3/api-docs` 200·공개 5엔드포인트 노출·`/internal` 제외·보안 스킴 3개(예매/확정/취소)·Swagger UI 브라우저 렌더 확인. 테스트=프레임워크 자동설정이라 단위테스트 무의미 → 기동 스모크로 갈음.
+  - **T6-3b** 배포(URL) — 차단 시 영상 보완. 미착수.
 - [ ] **T6-4** 동작 영상: 정상 흐름
 - [ ] **T6-5** 동작 영상: 동시성 시연 + 부하 결과
 - [ ] **T6-6** 셀프 체크리스트 7항목 점검(`Portfolio_Project_Evaluation_Criteria.md`)

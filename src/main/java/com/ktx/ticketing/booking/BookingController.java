@@ -3,6 +3,7 @@ package com.ktx.ticketing.booking;
 import com.ktx.ticketing.admission.EntrySession;
 import com.ktx.ticketing.admission.EntryTokenStore;
 import com.ktx.ticketing.domain.Reservation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.Nullable;
 import org.springframework.http.HttpStatus;
@@ -25,6 +26,7 @@ import java.time.LocalDateTime;
 @RestController
 @RequestMapping("/api/reservations")
 @RequiredArgsConstructor
+@SecurityRequirement(name = "EntryToken") // 예매는 X-Entry-Token 필요 → Swagger UI 자물쇠 표시
 public class BookingController {
 
     static final String ENTRY_TOKEN_HEADER = "X-Entry-Token";

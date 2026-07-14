@@ -39,6 +39,9 @@ dependencies {
     implementation("org.redisson:redisson-spring-boot-starter:4.4.0")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("io.micrometer:micrometer-registry-prometheus")
+    // API 문서/시연 진입점(T6-3a). FE 부재의 대체 — Swagger UI 로 조회→입장→예매→확정→취소 클릭 시연.
+    // v3.0.x 가 Spring Boot 4.0 전용(2.x 는 Boot 3). 버전은 Boot BOM 관리 대상 아님 → 명시.
+    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3")
     // 스키마는 Flyway 가 관리(ddl-auto 는 validate). 생성 컬럼/부분 유니크(V2)처럼 ddl-auto 로
     // 표현 불가한 DDL 을 명시 마이그레이션으로 두기 위함.
     // Spring Boot 4.0 은 flyway-core 만으론 자동설정을 하지 않는다(모듈 분리) → 자동설정 포함 스타터 필수.
