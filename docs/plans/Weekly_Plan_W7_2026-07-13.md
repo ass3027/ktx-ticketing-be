@@ -55,12 +55,12 @@ README(문제정의·아키텍처·트레이드오프·성능 그래프) + 다�
 ## 5. 주간 DoD (Definition of Week-done)
 
 - [x] B-4 시드 출발일 상대날짜화 — 완료(07/13, `fix/b-4-seed-relative-date`): 코드 3곳 + 런타임 검증(시드창 07/14~·avail 50·SCARD 1000·k6 FROM_DATE 일치·L1 `reserve_ok=1`×3·오버셀 0)
-- [ ] T6-2 아키텍처/시퀀스 다이어그램 이미지 확보 (README 임베드 가능)
-- [ ] T6-1 README 완성 — 문제정의·아키텍처·기술선택·트레이드오프·성능 그래프(E1·E2·E3) + C1·C2·C6 충족
+- [x] T6-2 아키텍처/시퀀스 다이어그램 이미지 확보 — 완료(07/14): Mermaid→SVG 3장(아키텍처·happy path·동시성 경합), 투명배경·글자색 고침, `docs/images/architecture.md` 임베드
+- [x] T6-1 README 완성 — 완료(07/14): 문제정의·아키텍처(다이어그램 3장)·기술선택·트레이드오프·성능 그래프(E1·E2·E3) + C1·C2·C6 충족. 잔여 결과물=배포/영상뿐
 - [ ] T6-4 동작 영상(정상 흐름) 확보
 - [ ] T6-5 동작 영상(동시성 oversell=0 시연 + 부하 결과) 확보 — 핵심 셀링포인트
-- [ ] T6-3a Swagger UI(`/swagger-ui.html`) 노출 — API 클릭 시연 진입점 확보(FE 대체)
+- [x] T6-3a Swagger UI(`/swagger-ui.html`) 노출 — 완료(07/14): springdoc 3.0.3(Boot4 전용), X-Entry-Token 글로벌 보안 스킴, /internal 제외, 런타임 검증(api-docs 200·5엔드포인트·UI 렌더)
 - [ ] T6-3b 배포 URL 시도(백엔드 단독 + Swagger) — 확보 시 링크, 차단 시 영상 보완 + 사유 기록
-- [ ] T6-6 셀프 체크리스트 C1~C7 점검 완료
+- [x] T6-6 셀프 체크리스트 C1~C7 점검 완료 — 완료(07/14): 6/7 충족, C3만 부분 미달(배포·영상 대기). 변별력 강점=C4(AI 게이트)·C7(E1 정직 서술)
 - [ ] T6-7 최종 점검 + 제출 → **M5 완결(제출 가능)**
 - [ ] `KTX_Ticketing_Task_Checklist.md` T6-1~T6-7 `[x]` + 진행 현황 요약표 갱신

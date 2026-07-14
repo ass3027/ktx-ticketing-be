@@ -38,6 +38,13 @@ spring:
 server:
   port: 8080
 
+# API 문서/시연(T6-3a). /internal/** 는 감사용 내부 경로라 공개 문서에서 제외.
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+  paths-to-exclude: /internal/**
+
 booking:
   preemption:
     # T4-9 E1: 좌석 선점(SREM) 게이트 on/off. 기본 true=프로덕션(After, Redis 앞단에서 경합 흡수).
