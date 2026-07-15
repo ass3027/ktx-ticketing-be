@@ -64,4 +64,4 @@ README(문제정의·아키텍처·트레이드오프·성능 그래프) + 다�
 - [x] T6-6 셀프 체크리스트 C1~C7 점검 완료 — 완료(07/14): **7/7 충족**(T6-5 동작 증거 확보 + T6-3b 배포 생략 근거 명시로 C3 상향). 변별력 강점=C4(AI 게이트)·C7(E1 정직 서술)
 - [x] T6-7 최종 점검 + 제출 가능 상태 확정 — 완료(07/14): 문서 정합성 스윕(진행 요약표 stale 집계 정정·README 테스트 클래스 수 정정·링크/이미지/수치 재확인) + 셀프체크 7/7 확정 → **M5 완결(제출 가능)**. 실제 플랫폼 등록은 사용자 작업
 - [x] `KTX_Ticketing_Task_Checklist.md` T6-1~T6-7 상태 + 진행 현황 요약표 갱신 — 완료(07/14): P6 6/7(86%)·합계 44/55(80%)·P4 10/14 정정
-- [ ] `README.md` 핵심 메커니즘 누락 확인 — 조회 리스트 캐시(`ScheduleListCache`, single-flight·TTL 1s)와 캐시 무효화(cache invalidation) 처리가 "핵심 메커니즘" 절에 빠져 있는지 점검·보완. E3/2-tier 서사와 연결되는 조회 경로 핵심인데 메커니즘 목록엔 미기재
+- [x] `README.md` 핵심 메커니즘 누락 확인 — 완료(07/15): 조회 리스트 캐시(`ScheduleListCache`)를 "핵심 메커니즘" 5번째 항목으로 추가. **점검 결과 캐시 무효화(invalidation)는 코드에 없음이 확정** — 능동 무효화 대신 **TTL(1s) 경계 + 예매 시점 `SREM=0` 자가교정**이 설계(`QueryCacheProperties` javadoc 근거). single-flight(stampede 방어)를 문제(스탬피드)↔해법(single-flight)로 병기, double-checked-locking·jitter 상세는 기존 E3 절에 유지. E3 p95 8s→26ms 서사와 연결
