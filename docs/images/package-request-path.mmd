@@ -1,0 +1,31 @@
+%%{init: {"theme":"default","themeVariables":{"fontSize":"22px","fontFamily":"Malgun Gothic, Segoe UI, sans-serif"},"flowchart":{"nodeSpacing":60,"rankSpacing":60,"padding":16,"wrappingWidth":480}}}%%
+flowchart TB
+    subgraph SCH["schedule — GET /api/schedules"]
+        Q["운행편 조회<br/>qcache 히트 또는 DB + SCARD avail"]
+    end
+
+    subgraph ADM["admission — POST /api/entry"]
+        E1["입장 요청<br/>INCR active:{scheduleId}"]
+        E2["EntryToken 발급<br/>SET entry:{uuid} (TTL)"]
+        R429["429 + Retry-After<br/>K 초과 → DECR 롤백"]
+    end
+
+    subgraph BKG["booking — POST /api/reservations"]
+        B1["토큰 검증<br/>GET entry:{token} → EntrySession"]
+        B2["좌석 선점<br/>SEAT: SREM · AUTO: SPOP avail:{scheduleId}"]
+        B3["HELD 예약 생성<br/>DB insert · @Version"]
+        R401["401<br/>토큰 없음 · 만료 · 무효"]
+        R409["409 / 410<br/>선점 패배 · 매진"]
+    end
+
+    Q --> E1
+    E1 -->|"active ≤ K"| E2
+    E1 -->|"active > K"| R429
+    E2 --> B1
+    B1 -->|"유효"| B2
+    B1 -->|"무효"| R401
+    B2 -->|"승리"| B3
+    B2 -->|"패배"| R409
+
+    classDef reject fill:#FAECE7,stroke:#993C1D,color:#712B13;
+    class R429,R401,R409 reject;

@@ -1,0 +1,18 @@
+%%{init: {"theme":"default","themeVariables":{"fontSize":"22px","fontFamily":"Malgun Gothic, Segoe UI, sans-serif"},"flowchart":{"nodeSpacing":60,"rankSpacing":60,"padding":16,"wrappingWidth":480}}}%%
+flowchart TB
+    H["HELD 예약<br/>expiresAt 까지 보유"]
+
+    H --> C["확정<br/>POST /{id}/confirm"]
+    H --> X["취소<br/>DELETE /{id}"]
+    H --> T["만료 sweep<br/>HeldExpiryScheduler"]
+
+    C --> C2["좌석 SOLD<br/>예약 CONFIRMED<br/>DB 커밋 · @Version"]
+    X --> X2["좌석 AVAILABLE<br/>예약 CANCELLED<br/>DB 커밋 · @Version"]
+    T --> T2["좌석 AVAILABLE<br/>예약 EXPIRED<br/>건별 tx 커밋"]
+
+    C2 --> C3["커밋 후 Redis<br/>DECR active<br/>revoke entry"]
+    X2 --> X3["커밋 후 Redis<br/>SADD avail<br/>DECR active<br/>revoke entry"]
+    T2 --> T3["커밋 후 Redis<br/>SADD avail<br/>DECRBY active"]
+
+    classDef afterCommit fill:#E1F5EE,stroke:#0F6E56,color:#085041;
+    class C3,X3,T3 afterCommit;
